@@ -6,7 +6,7 @@ import usb1
 import asyncio
 import threading
 import importlib.resources
-from fx2 import VID_CYPRESS, PID_FX2, REQ_RAM, REG_CPUCS
+from fx2 import REQ_RAM, REG_CPUCS
 from fx2.format import input_data
 
 from ..support.logging import *
@@ -16,14 +16,14 @@ from .config import GlasgowConfig
 
 __all__ = ["GlasgowHardwareDevice"]
 
+
 logger = logging.getLogger(__name__)
 
 
 VID_QIHW         = 0x20b7
 PID_GLASGOW      = 0x9db1
 
-REQ_API_LEVEL    = 0x0F
-CUR_API_LEVEL    = 0x01
+CUR_API_LEVEL    = 0x02
 
 REQ_EEPROM       = 0x10
 REQ_FPGA_CFG     = 0x11
@@ -37,6 +37,7 @@ REQ_BITSTREAM_ID = 0x18
 REQ_IOBUF_ENABLE = 0x19
 REQ_LIMIT_VOLT   = 0x1A
 REQ_PULL         = 0x1B
+REQ_TEST_LEDS    = 0x1C
 
 ST_ERROR         = 1<<0
 ST_FPGA_RDY      = 1<<1
@@ -59,21 +60,18 @@ class _PollerThread(threading.Thread):
 
 class GlasgowHardwareDevice:
     @staticmethod
-    def builtin_firmware():
-        with importlib.resources.open_text(__package__, "firmware.ihex") as f:
+    def firmware():
+        with importlib.resources.files(__package__).joinpath("firmware.ihex").open("r") as f:
             return input_data(f, fmt="ihex")
 
     @classmethod
-    def _enumerate_devices(cls, usb_context, _factory_rev=None):
+    def _enumerate_devices(cls, usb_context):
         devices = []
         devices_by_serial = {}
 
         def hotplug_callback(usb_context, device, event):
             if event == usb1.HOTPLUG_EVENT_DEVICE_ARRIVED:
-                vendor_id  = device.getVendorID()
-                product_id = device.getProductID()
-
-                if (vendor_id, product_id) in [(VID_CYPRESS, PID_FX2), (VID_QIHW, PID_GLASGOW)]:
+                if device.getVendorID() == VID_QIHW and device.getProductID() == PID_GLASGOW:
                     devices.append(device)
 
         if usb_context.hasCapability(usb1.CAP_HAS_HOTPLUG):
@@ -85,53 +83,35 @@ class GlasgowHardwareDevice:
         while any(devices):
             device = devices.pop()
 
-            vendor_id  = device.getVendorID()
-            product_id = device.getProductID()
-            device_id  = device.getbcdDevice()
-            if (vendor_id, product_id) == (VID_CYPRESS, PID_FX2):
-                if _factory_rev is None:
-                    logger.debug("found bare FX2 device %03d/%03d",
-                                 device.getBusNumber(), device.getDeviceAddress())
-                    continue
-                else:
-                    logger.debug("found bare FX2 device %03d/%03d to be factory flashed",
-                                 device.getBusNumber(), device.getDeviceAddress())
-                    vendor_id  = VID_QIHW
-                    product_id = PID_GLASGOW
-                    revision   = _factory_rev
-            elif (vendor_id, product_id) == (VID_QIHW, PID_GLASGOW):
-                revision = GlasgowConfig.decode_revision(device_id & 0xFF)
+            if device.getVendorID() == VID_QIHW and device.getProductID() == PID_GLASGOW:
+                revision  = GlasgowConfig.decode_revision(device.getbcdDevice() & 0xFF)
+                api_level = device.getbcdDevice() >> 8
             else:
                 continue
 
-            handle = device.open()
-            if device_id & 0xFF00 in (0x0000, 0xA000):
+            if api_level == 0:
                 logger.debug("found rev%s device without firmware", revision)
-            else:
-                device_serial = handle.getASCIIStringDescriptor(
+            elif api_level != CUR_API_LEVEL:
+                logger.info("found rev%s device with API level %d (supported API level is %d)",
+                            revision, api_level, CUR_API_LEVEL)
+            else: # api_level == CUR_API_LEVEL
+                handle = device.open()
+                serial = handle.getASCIIStringDescriptor(
                     device.getSerialNumberDescriptor())
-                if device_serial in devices_by_serial:
-                    handle.close()
+                if serial in devices_by_serial:
                     continue
+                handle.close()
 
-                try:
-                    device_api_level, = handle.controlRead(
-                        usb1.REQUEST_TYPE_VENDOR, REQ_API_LEVEL, 0, 0, 1)
-                except usb1.USBErrorPipe:
-                    device_api_level = 0x00
-                if device_api_level != CUR_API_LEVEL:
-                    logger.info("found rev%s device with API level %d "
-                                "(supported API level is %d)",
-                                revision, device_api_level, CUR_API_LEVEL)
-                else:
-                    handle.close()
-                    logger.debug("found rev%s device with serial %s", revision, device_serial)
-                    devices_by_serial[device_serial] = (revision, device)
-                    continue
+                logger.debug("found rev%s device with serial %s", revision, serial)
+                devices_by_serial[serial] = (revision, device)
+                continue
 
-            logger.debug("loading built-in firmware to rev%s device", revision)
+            # If the device has no firmware or the firmware is too old (or, potentially, too new),
+            # load the firmware that we know will work.
+            logger.debug("loading firmware to rev%s device", revision)
+            handle = device.open()
             handle.controlWrite(usb1.REQUEST_TYPE_VENDOR, REQ_RAM, REG_CPUCS, 0, [1])
-            for address, data in cls.builtin_firmware():
+            for address, data in cls.firmware():
                 while len(data) > 0:
                     handle.controlWrite(usb1.REQUEST_TYPE_VENDOR, REQ_RAM,
                                         address, 0, data[:4096])
@@ -174,9 +154,9 @@ class GlasgowHardwareDevice:
             devices = cls._enumerate_devices(usb_context)
             return list(devices.keys())
 
-    def __init__(self, serial=None, *, _factory_rev=None):
+    def __init__(self, serial=None):
         usb_context = usb1.USBContext()
-        devices = self._enumerate_devices(usb_context, _factory_rev)
+        devices = self._enumerate_devices(usb_context)
 
         if len(devices) == 0:
             raise GlasgowDeviceError("device not found")
@@ -419,12 +399,12 @@ class GlasgowHardwareDevice:
         except usb1.USBErrorPipe:
             raise GlasgowDeviceError("FPGA configuration failed")
 
-    async def download_target(self, plan, *, rebuild=False):
-        if await self.bitstream_id() == plan.bitstream_id and not rebuild:
+    async def download_target(self, plan, *, reload=False):
+        if await self.bitstream_id() == plan.bitstream_id and not reload:
             logger.info("device already has bitstream ID %s", plan.bitstream_id.hex())
             return
-        logger.info("building bitstream ID %s", plan.bitstream_id.hex())
-        await self.download_bitstream(plan.execute(), plan.bitstream_id)
+        logger.info("generating bitstream ID %s", plan.bitstream_id.hex())
+        await self.download_bitstream(plan.get_bitstream(), plan.bitstream_id)
 
     async def download_prebuilt(self, plan, bitstream_file):
         bitstream_file_id = bitstream_file.read(16)
@@ -479,8 +459,16 @@ class GlasgowHardwareDevice:
         await self._write_voltage(REQ_IO_VOLT, spec, volts)
         # Check if we've succeeded
         if await self._status() & ST_ERROR:
-            raise GlasgowDeviceError("cannot set I/O port(s) {} voltage to {:.2} V"
-                                     .format(spec or "(none)", float(volts)))
+            causes = []
+            for port in spec:
+                if (limit := await self._read_voltage(REQ_LIMIT_VOLT, port)) < volts:
+                    causes.append("port {} voltage limit is set to {:.2} V"
+                                  .format(port, limit))
+            causes_string = ""
+            if causes:
+                causes_string = f" ({', '.join(causes)})"
+            raise GlasgowDeviceError("cannot set I/O port(s) {} voltage to {:.2} V{}"
+                                     .format(spec or "(none)", float(volts), causes_string))
 
     async def set_voltage_limit(self, spec, volts):
         await self._write_voltage(REQ_LIMIT_VOLT, spec, volts)
@@ -587,6 +575,10 @@ class GlasgowHardwareDevice:
                 raise GlasgowDeviceError("cannot set I/O port(s) {} pull resistors to "
                                          "low={} high={}"
                                          .format(spec or "(none)", low or "{}", high or "{}"))
+
+    async def test_leds(self, states):
+        await self.control_write(usb1.REQUEST_TYPE_VENDOR, REQ_TEST_LEDS,
+            0, states, [])
 
     async def _register_error(self, addr):
         if await self._status() & ST_FPGA_RDY:

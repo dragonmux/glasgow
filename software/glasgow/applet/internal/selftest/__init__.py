@@ -16,6 +16,8 @@ class SelfTestSubtarget(Elaboratable):
         self.reg_o_b,  applet.addr_o_b  = target.registers.add_rw(8)
         self.reg_i_b,  applet.addr_i_b  = target.registers.add_ro(8)
 
+        self.reg_leds, applet.addr_leds = target.registers.add_rw(5)
+
         self.pins_a = [target.platform.request("port_a", n) for n in range(8)]
         self.pins_b = [target.platform.request("port_b", n) for n in range(8)]
         try:
@@ -27,25 +29,25 @@ class SelfTestSubtarget(Elaboratable):
         m = Module()
 
         m.d.comb += [pin.oe.eq(pin.io.oe) for pin in self.pins_a if hasattr(pin, "oe")]
-        m.d.comb += [pin.oe.eq(pin.io.oe) for pin in self.pins_b if hasattr(pin, "oe")]
-        m.d.comb += [led.eq(1) for led in self.leds]
-
         m.d.comb += [
             Cat(pin.io.oe for pin in self.pins_a).eq(self.reg_oe_a),
             Cat(pin.io.o for pin in self.pins_a).eq(self.reg_o_a),
             self.reg_i_a.eq(Cat(pin.io.i for pin in self.pins_a))
         ]
 
+        m.d.comb += [pin.oe.eq(pin.io.oe) for pin in self.pins_b if hasattr(pin, "oe")]
         m.d.comb += [
             Cat(pin.io.oe for pin in self.pins_b).eq(self.reg_oe_b),
             Cat(pin.io.o for pin in self.pins_b).eq(self.reg_o_b),
             self.reg_i_b.eq(Cat(pin.io.i for pin in self.pins_b))
         ]
 
+        m.d.comb += Cat(self.leds).eq(self.reg_leds)
+
         return m
 
 
-class SelfTestApplet(GlasgowApplet, name="selftest"):
+class SelfTestApplet(GlasgowApplet):
     logger = logging.getLogger(__name__)
     help = "diagnose hardware faults"
     description = """
@@ -54,6 +56,8 @@ class SelfTestApplet(GlasgowApplet, name="selftest"):
     Currently, shorts and opens on I/O lines can be detected.
 
     Test modes:
+        * leds: test indicator LED functionality
+          (Vio will be enabled)
         * pins-int: detect shorts on traces between FPGA and I/O buffers
           (no requirements)
         * pins-ext: detect shorts and opens on traces between FPGA and I/O connector
@@ -68,25 +72,27 @@ class SelfTestApplet(GlasgowApplet, name="selftest"):
           (no requirements)
     """
 
-    __all_modes = ["pins-int", "pins-ext", "pins-pull", "pins-loop", "voltage", "loopback"]
+    __all_modes = ["leds", "pins-int", "pins-ext", "pins-pull", "pins-loop", "voltage", "loopback"]
     __default_modes = ["pins-int", "loopback"]
 
     def build(self, target, args):
-        target.submodules += SelfTestSubtarget(applet=self, target=target)
+        target.add_submodule(SelfTestSubtarget(applet=self, target=target))
 
         self.mux_interface_1 = iface_1 = target.multiplexer.claim_interface(self, None)
         self.mux_interface_2 = iface_2 = target.multiplexer.claim_interface(self, None)
 
         in_fifo_1, out_fifo_1 = iface_1.get_inout_fifo()
         in_fifo_2, out_fifo_2 = iface_2.get_inout_fifo()
-        target.comb += [
-            in_fifo_1.din.eq(out_fifo_1.dout),
-            in_fifo_1.we.eq(out_fifo_1.readable),
-            out_fifo_1.re.eq(in_fifo_1.writable),
-            in_fifo_2.din.eq(out_fifo_2.dout),
-            in_fifo_2.we.eq(out_fifo_2.readable),
-            out_fifo_2.re.eq(in_fifo_2.writable),
+        m = Module()
+        m.d.comb += [
+            in_fifo_1.w_data.eq(out_fifo_1.r_data),
+            in_fifo_1.w_en.eq(out_fifo_1.r_rdy),
+            out_fifo_1.r_en.eq(in_fifo_1.w_rdy),
+            in_fifo_2.w_data.eq(out_fifo_2.r_data),
+            in_fifo_2.w_en.eq(out_fifo_2.r_rdy),
+            out_fifo_2.r_en.eq(in_fifo_2.w_rdy),
         ]
+        target.add_submodule(m)
 
     @classmethod
     def add_run_arguments(cls, parser, access):
@@ -140,6 +146,22 @@ class SelfTestApplet(GlasgowApplet, name="selftest"):
         report = []
         for mode in args.modes or self.__default_modes:
             self.logger.info("running self-test mode %s", mode)
+
+            if mode == "leds":
+                self.logger.warn("power cycle the device to restore LED function")
+
+                led_state = 0b11111111111_00000000000
+                while True:
+                    await device.test_leds(
+                        (led_state & 0b1111) >> 0)
+                    await device.write_register(self.addr_leds,
+                        (led_state & 0b11111_0000) >> 4)
+                    await device.set_voltage("A",
+                        3.3 if (led_state & 0b1_000000000) >> 9 else 0.0)
+                    await device.set_voltage("B",
+                        3.3 if (led_state & 0b1_0000000000) >> 10 else 0.0)
+                    await asyncio.sleep(0.1)
+                    led_state = ((led_state << 1) | (led_state >> 21)) & ~(1 << 22)
 
             if mode in ("pins-int", "pins-ext", "pins-pull"):
                 if device.revision >= "C0":
@@ -268,9 +290,9 @@ class SelfTestApplet(GlasgowApplet, name="selftest"):
         if passed:
             self.logger.info("self-test: PASS")
         else:
-            self.logger.error("self-test: FAIL")
             for (mode, message) in report:
                 self.logger.error("%s: %s", mode, message)
+            raise GlasgowAppletError("self-test: FAIL")
 
 # -------------------------------------------------------------------------------------------------
 

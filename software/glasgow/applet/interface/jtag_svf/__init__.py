@@ -93,16 +93,21 @@ class SVFInterface(SVFEventHandler):
                            % (frequency / 1e3, self._frequency / 1e3))
 
     async def svf_trst(self, mode):
-        if mode == "ABSENT":
-            pass # ignore; the standard doesn't seem to specify what to do?
-        elif mode == "Z":
-            await self.lower.set_trst(active=None)
-        elif mode == "ON":
-            await self.lower.set_trst(active=True)
-        elif mode == "OFF":
-            await self.lower.set_trst(active=False)
+        if self.lower.has_trst:
+            if mode == "ABSENT":
+                pass # ignore; the standard doesn't seem to specify what to do?
+            elif mode == "Z":
+                await self.lower.set_trst(active=None)
+            elif mode == "ON":
+                await self.lower.set_trst(active=True)
+            elif mode == "OFF":
+                await self.lower.set_trst(active=False)
+            else:
+                assert False
         else:
-            assert False
+            # The TRST# pin is not present; ignore the command if it's Z or OFF, error if it's ON.
+            if mode == 'ON':
+                raise SVFError("TRST ON command used, but the TRST# pin is not present")
 
     async def svf_state(self, state, path):
         await self._enter_state(state, path)
@@ -169,7 +174,7 @@ class SVFInterface(SVFEventHandler):
         raise SVFError("the PIO command is not supported")
 
 
-class JTAGSVFApplet(JTAGProbeApplet, name="jtag-svf"):
+class JTAGSVFApplet(JTAGProbeApplet):
     logger = logging.getLogger(__name__)
     help = "play SVF test vectors via JTAG"
     description = """

@@ -21,13 +21,14 @@ enum {
   GLASGOW_REV_C0 = 0x30,
   GLASGOW_REV_C1 = 0x31,
   GLASGOW_REV_C2 = 0x32,
+  GLASGOW_REV_C3 = 0x33,
 
   GLASGOW_REV_NA = 0xF9,
 };
 
 enum {
   // API compatibility level
-  CUR_API_LEVEL  = 0x01,
+  CUR_API_LEVEL  = 0x02,
 };
 
 // PORTA pins
@@ -53,7 +54,8 @@ enum {
   I2C_ADDR_FPGA            = 0b0001000,
   I2C_ADDR_FX2_MEM         = 0b1010001,
   I2C_ADDR_ICE_MEM         = 0b1010010,
-  I2C_ADDR_IOA_DAC         = 0b0001100,
+  I2C_ADDR_IOA_DAC_REVBC12 = 0b0001100,
+  I2C_ADDR_IOA_DAC_REVC3   = 0b0001110,
   I2C_ADDR_IOB_DAC         = 0b0001101,
   I2C_ADDR_ALL_DAC         = 0b1001000,
   I2C_ADDR_IOA_ADC_ADC081C = 0b1010100,
@@ -84,7 +86,11 @@ __xdata __at(0x4000 - CONF_SIZE) struct glasgow_config {
   uint32_t  bitstream_size;
   char      bitstream_id[BITSTREAM_ID_SIZE];
   uint16_t  voltage_limit[2];
+  char      manufacturer[23];
 } glasgow_config;
+
+// Test mode API
+extern __bit test_leds;
 
 // FPGA API
 void fpga_init();
@@ -119,9 +125,15 @@ bool iobuf_poll_alert_adc081c(__xdata uint8_t *mask, bool clear);
 // ADC API (TI INA233)
 bool iobuf_init_adc_ina233();
 bool iobuf_measure_voltage_ina233(uint8_t selector, __xdata uint16_t *millivolts);
+bool iobuf_set_alert_ina233(uint8_t mask,
+                     __xdata const uint16_t *low_millivolts,
+                     __xdata const uint16_t *high_millivolts);
 bool iobuf_get_alert_ina233(uint8_t selector,
                      __xdata uint16_t *low_millivolts,
                      __xdata uint16_t *high_millivolts);
+bool iobuf_poll_alert_ina233(__xdata uint8_t *mask);
+bool iobuf_clear_alert_ina233(uint8_t mask);
+void iobuf_read_alert_cache_ina233(__xdata uint8_t *mask, bool clear);
 
 // Pull API
 bool iobuf_set_pull(uint8_t selector, uint8_t enable, uint8_t level);

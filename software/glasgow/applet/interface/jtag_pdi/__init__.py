@@ -37,7 +37,7 @@ class JTAGPDIInterface:
 				yield octet
 		return process()
 
-class JTAGPDIApplet(GlasgowApplet, name="jtag-pdi"):
+class JTAGPDIApplet(GlasgowApplet):
 	logger = logging.getLogger(__name__)
 	help = "capture JTAG-PDI traffic"
 	description = """

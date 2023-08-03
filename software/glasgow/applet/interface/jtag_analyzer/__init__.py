@@ -170,7 +170,7 @@ class JTAGAnalyzerInterface:
 				yield bits
 		return process()
 
-class JTAGAnalyzerApplet(GlasgowApplet, name="jtag-analyzer"):
+class JTAGAnalyzerApplet(GlasgowApplet):
 	logger = logging.getLogger(__name__)
 	help = "capture JTAG traffic"
 	description = """

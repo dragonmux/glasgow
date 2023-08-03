@@ -5,10 +5,12 @@
 
 static bool fpga_check_ready() {
   if(IOA & (1 << PINA_CDONE)) {
-    IOD |=  (1<<PIND_LED_ICE);
+    if (!test_leds)
+      IOD |=  (1<<PIND_LED_ICE);
     return true;
   } else {
-    IOD &= ~(1<<PIND_LED_ICE);
+    if (!test_leds)
+      IOD &= ~(1<<PIND_LED_ICE);
     return false;
   }
 }
@@ -34,6 +36,7 @@ void fpga_reset() {
     case GLASGOW_REV_C0:
     case GLASGOW_REV_C1:
     case GLASGOW_REV_C2:
+    case GLASGOW_REV_C3:
       OEA |=  (1<<PINA_CRESET_N_REVC);
       IOA &= ~(1<<PINA_CRESET_N_REVC);
       break;
@@ -56,6 +59,7 @@ void fpga_reset() {
     case GLASGOW_REV_C0:
     case GLASGOW_REV_C1:
     case GLASGOW_REV_C2:
+    case GLASGOW_REV_C3:
       IOA |=  (1<<PINA_CRESET_N_REVC);
       break;
   }
@@ -133,6 +137,7 @@ __endasm;
     case GLASGOW_REV_C0:
     case GLASGOW_REV_C1:
     case GLASGOW_REV_C2:
+    case GLASGOW_REV_C3:
       IFCONFIG |= _IFCLKOE|_3048MHZ|_IFCFG0|_IFCFG1;
       break;
   }

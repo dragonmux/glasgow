@@ -5,10 +5,8 @@ from collections import namedtuple
 import argparse
 import logging
 import asyncio
-import aiohttp
-import yarl
 import struct
-import crcmod
+from amaranth.lib.crc.catalog import CRC8_NRSC_5
 
 from ....support.logging import dump_hex
 from ....support.data_logger import DataLogger
@@ -47,7 +45,7 @@ class SCD30I2CInterface:
     def _log(self, message, *args):
         self._logger.log(self._level, "SCD30: " + message, *args)
 
-    _crc = staticmethod(crcmod.mkCrcFun(0x131, initCrc=0xff, rev=False))
+    _crc = staticmethod(CRC8_NRSC_5(data_width=8).compute)
 
     async def _read_raw(self, addr, length=0):
         assert length % 2 == 0
@@ -167,7 +165,7 @@ class SCD30I2CInterface:
         await self._write(CMD_ALTITUDE_COMP, ">H", altitude_m)
 
 
-class SensorSCD30Applet(I2CInitiatorApplet, name="sensor-scd30"):
+class SensorSCD30Applet(I2CInitiatorApplet):
     logger = logging.getLogger(__name__)
     help = "measure CO₂, humidity, and temperature with Sensirion SCD30 sensors"
     description = """

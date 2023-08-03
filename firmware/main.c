@@ -9,6 +9,12 @@
 #include <usbmicrosoft.h>
 #include "glasgow.h"
 
+// bcdDevice is a 16-bit number where the high byte indicates the API revision and the low byte
+// indicates the hardware revision. If the firmware is not flashed (only the FX2 header is present)
+// then the high byte is zero (as configured by `glasgow factory`). The low byte can be zero on
+// legacy devices with old or no firmware where the hardware revision is present only in
+// the Glasgow configuration block. Loading new firmware ensures it is present in the FX2 header.
+
 usb_desc_device_c usb_device = {
   .bLength              = sizeof(struct usb_desc_device),
   .bDescriptorType      = USB_DESC_DEVICE,
@@ -19,7 +25,7 @@ usb_desc_device_c usb_device = {
   .bMaxPacketSize0      = 64,
   .idVendor             = VID_QIHW,
   .idProduct            = PID_GLASGOW,
-  .bcdDevice            = 0x0100,
+  .bcdDevice            = CUR_API_LEVEL << 8,
   .iManufacturer        = 1,
   .iProduct             = 2,
   .iSerialNumber        = 3,
@@ -138,8 +144,8 @@ usb_configuration_set_c usb_configs[] = {
 };
 
 usb_ascii_string_c usb_strings[] = {
-  [0] = "whitequark research",
-  [1] = "Glasgow Debug Tool",
+  [0] = "whitequark research\0\0\0\0", // 23 characters
+  [1] = "Glasgow Interface Explorer",
   [2] = "XX-XXXXXXXXXXXXXXXX",
   // Configurations
   [3] = "Pipe P at {2x512B EP2OUT/EP6IN}, Q at {2x512B EP4OUT/EP8IN}",
@@ -251,21 +257,35 @@ static void config_fixup() {
 // Populate descriptors from device configuration, if any.
 static void descriptors_init() {
   __xdata struct usb_desc_device *desc_device = (__xdata struct usb_desc_device *)usb_device;
-  __xdata char *desc_serial = (__xdata char *)usb_strings[usb_device.iSerialNumber - 1];
+  __xdata char *desc_string;
 
-  desc_device->bcdDevice |= glasgow_config.revision;
-  desc_serial[0] = 'A' + (glasgow_config.revision >> 4) - 1;
-  desc_serial[1] = '0' + (glasgow_config.revision & 0xF);
-  xmemcpy(&desc_serial[3], (__xdata void *)glasgow_config.serial,
-          sizeof(glasgow_config.serial));
-  if(glasgow_config.revision == GLASGOW_REV_NA) {
+  // Set revision from configuration if any, or pretend to be an unflashed device if it's missing.
+  if(glasgow_config.revision != GLASGOW_REV_NA) {
+    desc_device->bcdDevice |= glasgow_config.revision;
+  } else {
     desc_device->idVendor  = VID_CYPRESS;
     desc_device->idProduct = PID_FX2;
   }
+
+  // Set manufacturer from configuration if it's set. Most devices will have this field zeroed,
+  // leaving the manufacturer string at the default value.
+  if (glasgow_config.manufacturer[0] != '\0') {
+    desc_string = (__xdata char *)usb_strings[usb_device.iManufacturer - 1];
+    xmemcpy(&desc_string[0], (__xdata void *)glasgow_config.manufacturer,
+            sizeof(glasgow_config.manufacturer));
+  }
+
+  // Set serial number from configuration. Serial number must be always valid, and the firmware
+  // fixes up the serial number in `config_init()` if the configuration is corrupted or missing.
+  desc_string = (__xdata char *)usb_strings[usb_device.iSerialNumber - 1];
+  desc_string[0] = 'A' + (glasgow_config.revision >> 4) - 1;
+  desc_string[1] = '0' + (glasgow_config.revision & 0xF);
+  xmemcpy(&desc_string[3], (__xdata void *)glasgow_config.serial,
+          sizeof(glasgow_config.serial));
 }
 
 enum {
-  // Glasgow API level request
+  // Only used by old checkouts of software, can be removed.
   USB_REQ_API_LEVEL    = 0x0F,
   // Glasgow API requests
   USB_REQ_EEPROM       = 0x10,
@@ -280,6 +300,7 @@ enum {
   USB_REQ_IOBUF_ENABLE = 0x19,
   USB_REQ_LIMIT_VOLT   = 0x1A,
   USB_REQ_PULL         = 0x1B,
+  USB_REQ_TEST_LEDS    = 0x1C,
   // Cypress requests
   USB_REQ_CYPRESS_EEPROM_DB = 0xA9,
   // libfx2 requests
@@ -287,6 +308,9 @@ enum {
   // Microsoft requests
   USB_REQ_GET_MS_DESCRIPTOR = 0xC0,
 };
+
+// Test mode functions
+__bit test_leds = false;
 
 enum {
   // Status bits
@@ -305,10 +329,12 @@ enum {
 static uint8_t status;
 
 static void update_err_led() {
-  if(status & (ST_ERROR | ST_ALERT))
-    IOD |=  (1<<PIND_LED_ERR);
-  else
-    IOD &= ~(1<<PIND_LED_ERR);
+  if(!test_leds) {
+    if(status & (ST_ERROR | ST_ALERT))
+      IOD |=  (1<<PIND_LED_ERR);
+    else
+      IOD &= ~(1<<PIND_LED_ERR);
+  }
 }
 
 static void latch_status_bit(uint8_t bit) {
@@ -330,7 +356,7 @@ static bool reset_status_bit(uint8_t bit) {
 // to allow new SETUP requests to arrive while the previous one is still being
 // handled (with all data received), the flag should be reset as soon as
 // the entire SETUP request is parsed.
-static volatile bool pending_setup;
+static volatile __bit pending_setup;
 
 void handle_usb_setup(__xdata struct usb_req_setup *req) {
   req;
@@ -606,7 +632,7 @@ void handle_pending_usb_setup() {
 
     while(EP0CS & _BUSY);
 
-    if(glasgow_config.revision == GLASGOW_REV_C2)
+    if(glasgow_config.revision >= GLASGOW_REV_C2)
       result = iobuf_measure_voltage_ina233(arg_mask, (__xdata uint16_t *)EP0BUF);
     else
       result = iobuf_measure_voltage_adc081c(arg_mask, (__xdata uint16_t *)EP0BUF);
@@ -633,7 +659,7 @@ void handle_pending_usb_setup() {
     if(arg_get) {
       while(EP0CS & _BUSY);
 
-      if(glasgow_config.revision == GLASGOW_REV_C2)
+      if(glasgow_config.revision >= GLASGOW_REV_C2)
         result = iobuf_get_alert_ina233(arg_mask, (__xdata uint16_t *)EP0BUF, (__xdata uint16_t *)EP0BUF + 1);
       else
         result = iobuf_get_alert_adc081c(arg_mask, (__xdata uint16_t *)EP0BUF, (__xdata uint16_t *)EP0BUF + 1);
@@ -647,9 +673,8 @@ void handle_pending_usb_setup() {
       SETUP_EP0_BUF(4);
       while(EP0CS & _BUSY);
 
-      if(glasgow_config.revision == GLASGOW_REV_C2)
-        // TODO
-        result = true;
+      if(glasgow_config.revision >= GLASGOW_REV_C2)
+        result = iobuf_set_alert_ina233(arg_mask, (__xdata uint16_t *)EP0BUF, (__xdata uint16_t *)EP0BUF + 1);
       else
         result = iobuf_set_alert_adc081c(arg_mask, (__xdata uint16_t *)EP0BUF, (__xdata uint16_t *)EP0BUF + 1);
 
@@ -666,12 +691,23 @@ void handle_pending_usb_setup() {
      req->bRequest == USB_REQ_POLL_ALERT &&
      req->wLength == 1) {
     pending_setup = false;
+    bool result = true;
 
     while(EP0CS & _BUSY);
-    iobuf_poll_alert_adc081c(EP0BUF, /*clear=*/true);
-    SETUP_EP0_BUF(1);
 
-    reset_status_bit(ST_ALERT);
+    // Read out the alert status and also clear the alert status (or cache)
+    if(glasgow_config.revision >= GLASGOW_REV_C2)
+      iobuf_read_alert_cache_ina233(EP0BUF, /*clear=*/true);
+    else
+      result = iobuf_poll_alert_adc081c(EP0BUF, /*clear=*/true);
+
+    if(!result) {
+      STALL_EP0();
+    } else {
+      SETUP_EP0_BUF(1);
+      // Clear the ERR led since we cleared the alert status above
+      reset_status_bit(ST_ALERT);
+    }
 
     return;
   }
@@ -757,6 +793,23 @@ void handle_pending_usb_setup() {
     return;
   }
 
+  // LED test mode request
+  if(req->bmRequestType == (USB_RECIP_DEVICE|USB_TYPE_VENDOR|USB_DIR_OUT) &&
+     req->bRequest == USB_REQ_TEST_LEDS &&
+     req->wLength == 0) {
+    uint8_t arg_states = req->wIndex;
+    pending_setup = false;
+
+    // Exit LED testing mode by resetting the device.
+    test_leds = true;
+    IOD &=             ~(0xf  << PIND_LED_FX2);
+    IOD |= (arg_states & 0xf) << PIND_LED_FX2;
+    ACK_EP0();
+
+    return;
+  }
+
+  // Only used by old checkouts of software, can be removed.
   if(req->bmRequestType == (USB_RECIP_DEVICE|USB_TYPE_VENDOR|USB_DIR_IN) &&
      req->bRequest == USB_REQ_API_LEVEL &&
      req->wLength == 1) {
@@ -789,8 +842,8 @@ void handle_pending_usb_setup() {
 }
 
 // Directly use the irq enable register EX0 to notify about a pending alert to avoid using
-// a separate variable which could get out of sync. 
-// Define it to armed_alert to document this usage pattern 
+// a separate variable which could get out of sync.
+// Define it to armed_alert to document this usage pattern
 #define armed_alert EX0
 
 void isr_IE0() __interrupt(_INT_IE0) {
@@ -803,11 +856,28 @@ void handle_pending_alert() {
   __xdata uint8_t mask;
   __xdata uint16_t millivolts = 0;
 
+  // switch on the ERR led
   latch_status_bit(ST_ALERT);
-  iobuf_poll_alert_adc081c(&mask, /*clear=*/false);
-  iobuf_set_voltage(mask, &millivolts);
+
+  if(glasgow_config.revision >= GLASGOW_REV_C2) {
+    iobuf_poll_alert_ina233(&mask);
+    // the ~ALERT line was not yet cleared by this call
+  } else {
+    iobuf_poll_alert_adc081c(&mask, /*clear=*/false);
+    // the ~ALERT line was cleared by this call
+  }
 
   // TODO: handle i2c comms errors of above calls
+
+  // permanently switch off the voltage regulators of the ports we got a alert on
+  iobuf_set_voltage(mask, &millivolts);
+
+  if(glasgow_config.revision >= GLASGOW_REV_C2) {
+    // only clear the ~ALERT line after the port vio has been disabled
+    // this prevents re-enabling the port voltage for a short time
+    // since on revC2 ~ALERT already disables the respective Vreg on a hw level
+    iobuf_clear_alert_ina233(mask);
+  }
 
   // the ADC that pulled the ~ALERT line should have released it by now
   // so we can re-enable the interrupt to catch the next alert
@@ -815,15 +885,15 @@ void handle_pending_alert() {
 }
 
 void isr_TF2() __interrupt(_INT_TF2) {
-  // Inlined from led_act_set() for call-free interrupt code.
-  IOD &= ~(1<<PIND_LED_ACT);
+  if (!test_leds)
+    IOD &= ~(1<<PIND_LED_ACT);
   TR2 = false;
   TF2 = false;
 }
 
 static void isr_EPn() __interrupt {
-  // Inlined from led_act_set() for call-free interrupt code.
-  IOD |= (1<<PIND_LED_ACT);
+  if (!test_leds)
+    IOD |= (1<<PIND_LED_ACT);
   // Just let it run, at the maximum reload value we get a pulse width of around 16ms.
   TR2 = true;
   // Clear all EPn IRQs, since we don't really need this IRQ to be fine-grained.
@@ -851,7 +921,7 @@ int main() {
   descriptors_init();
   iobuf_init_dac_ldo();
 
-  if(glasgow_config.revision == GLASGOW_REV_C2) {
+  if(glasgow_config.revision >= GLASGOW_REV_C2) {
     if (!iobuf_init_adc_ina233())
       latch_status_bit(ST_ERROR);
   }
@@ -927,9 +997,31 @@ int main() {
   usb_init(/*reconnect=*/true);
 
   while(1) {
+    // Handle pending events.
     if(pending_setup)
       handle_pending_usb_setup();
     if(!armed_alert)
       handle_pending_alert();
+
+    // There are few things more frustrating than having your debug tools fail you.
+    // Data-only USB cables are regretfully common. If the device finds itself without
+    // an address it should indicate this unusual condition, though in a gentle way
+    // because there are legitimate reasons for this to happen (PC in suspend, Glasgow
+    // used 'offline', etc).
+    if(!test_leds) {
+      if(FNADDR == 0) {
+        // If no address is assigned, slowly breathe. (Or, during enumeration, abruptly
+        // blink. That's okay though.)
+        switch (USBFRAMEH >> 1) {
+          case 0b00: IOD |=  (1<<PIND_LED_FX2); break;
+          case 0b01: IOD ^=  (1<<PIND_LED_FX2); break;
+          case 0b10: IOD &= ~(1<<PIND_LED_FX2); break;
+          case 0b11: IOD ^=  (1<<PIND_LED_FX2); break;
+        }
+      } else {
+        // Got plugged in, light up permanently.
+        IOD |= (1<<PIND_LED_FX2);
+      }
+    }
   }
 }

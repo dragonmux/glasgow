@@ -89,13 +89,13 @@ class ProgramM16CSubtarget(Elaboratable):
         m.d.comb += [
             self.uart.bit_cyc.eq(self.bit_cyc),
             # RX
-            self.in_fifo.din.eq(self.uart.rx_data),
-            self.in_fifo.we.eq(self.uart.rx_rdy),
-            self.uart.rx_ack.eq(self.in_fifo.writable),
+            self.in_fifo.w_data.eq(self.uart.rx_data),
+            self.in_fifo.w_en.eq(self.uart.rx_rdy),
+            self.uart.rx_ack.eq(self.in_fifo.w_rdy),
             # TX
-            self.uart.tx_data.eq(self.out_fifo.dout),
-            self.out_fifo.re.eq(self.uart.tx_rdy),
-            self.uart.tx_ack.eq(self.out_fifo.readable),
+            self.uart.tx_data.eq(self.out_fifo.r_data),
+            self.out_fifo.r_en.eq(self.uart.tx_rdy),
+            self.uart.tx_ack.eq(self.out_fifo.r_rdy),
         ]
 
         if hasattr(self.pads, "reset_t"):
@@ -306,7 +306,7 @@ class ProgramM16CInterface:
             raise M16CBootloaderError("entire array erase timeout")
 
 
-class ProgramM16CApplet(GlasgowApplet, name="program-m16c"):
+class ProgramM16CApplet(GlasgowApplet):
     logger = logging.getLogger(__name__)
     help = "program Renesas M16C microcomputers via UART"
     description = """
