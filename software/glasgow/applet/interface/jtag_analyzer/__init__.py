@@ -1,9 +1,8 @@
 import logging
 import argparse
 from vcd import VCDWriter
-from nmigen import *
-from nmigen.lib.cdc import FFSynchronizer
-from nmigen.lib.fifo import AsyncFIFO
+from amaranth import *
+from amaranth.lib.cdc import FFSynchronizer
 
 from ... import *
 
