@@ -5,6 +5,7 @@ from amaranth import *
 from amaranth.lib.cdc import FFSynchronizer
 
 from ... import *
+from ....access.direct.multiplexer import _FIFOWritePort
 
 class JTAGSignals(Record):
 	def __init__(self, name = None):
@@ -88,7 +89,7 @@ class JTAGAnalyzerChanges(Elaboratable):
 		return m
 
 class JTAGAnalyzerEventAdapter(Elaboratable):
-	def __init__(self, bus, changes, in_fifo):
+	def __init__(self, bus, changes, in_fifo: _FIFOWritePort):
 		self.tck = bus.tck
 		self.tms = bus.tms
 		self.tdi = bus.tdi
@@ -135,8 +136,8 @@ class JTAGAnalyzerEventAdapter(Elaboratable):
 			)),
 			trigger.eq(triggers.any() & ~idleStop),
 
-			self.in_fifo.din.eq(data),
-			self.in_fifo.we.eq(self.in_fifo.writable & trigger),
+			self.in_fifo.w_data.eq(data),
+			self.in_fifo.w_en.eq(self.in_fifo.w_rdy & trigger),
 		]
 		return m
 
