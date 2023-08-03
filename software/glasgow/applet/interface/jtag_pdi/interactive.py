@@ -1,5 +1,6 @@
 from amaranth import *
 from . import TAPInstruction, PDIOpcodes, Header
+from ....access.direct.multiplexer import _FIFOWritePort, _FIFOReadPort
 
 class JTAGBus(Elaboratable):
 	def __init__(self, *, pads):
@@ -460,7 +461,7 @@ class PDIController(Elaboratable):
 		return m
 
 class JTAGPDIInteractiveSubtarget(Elaboratable):
-	def __init__(self, *, pads, in_fifo, out_fifo, period_cyc):
+	def __init__(self, *, pads, in_fifo: _FIFOWritePort, out_fifo: _FIFOReadPort, period_cyc):
 		self._pads = pads
 		self._in_fifo = in_fifo
 		self._out_fifo = out_fifo

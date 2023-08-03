@@ -1,6 +1,7 @@
 from amaranth import *
 from amaranth.lib.cdc import FFSynchronizer
 from . import TAPInstruction, PDIOpcodes, Header
+from ....access.direct.multiplexer import _FIFOWritePort
 
 class JTAGTAP(Elaboratable):
 	def __init__(self, *, pads):
@@ -374,7 +375,7 @@ class PDIDissector(Elaboratable):
 		return m
 
 class JTAGPDISnifferSubtarget(Elaboratable):
-	def __init__(self, *, pads, in_fifo):
+	def __init__(self, *, pads, in_fifo: _FIFOWritePort):
 		self._pads = pads
 		self._in_fifo = in_fifo
 
