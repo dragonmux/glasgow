@@ -2,8 +2,7 @@ import logging
 import argparse
 from vcd import VCDWriter
 from enum import IntEnum
-from nmigen import *
-from nmigen.lib.cdc import FFSynchronizer
+from amaranth import *
 
 from ... import *
 

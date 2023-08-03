@@ -1,5 +1,5 @@
-from nmigen import *
-from nmigen.lib.cdc import FFSynchronizer
+from amaranth import *
+from amaranth.lib.cdc import FFSynchronizer
 from . import TAPInstruction, PDIOpcodes, Header
 
 class JTAGTAP(Elaboratable):

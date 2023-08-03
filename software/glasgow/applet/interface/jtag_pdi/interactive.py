@@ -1,4 +1,4 @@
-from nmigen import *
+from amaranth import *
 from . import TAPInstruction, PDIOpcodes, Header
 
 class JTAGBus(Elaboratable):

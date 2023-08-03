@@ -1,8 +1,8 @@
 #!/usr/bin/env python
-from nmigen import *
-from nmigen.lib.fifo import AsyncFIFO
-from nmigen.compat import TSTriple
-from nmigen.sim import Simulator
+from amaranth import *
+from amaranth.lib.fifo import AsyncFIFO
+from amaranth.compat import TSTriple
+from amaranth.sim import Simulator
 
 from sys import argv, path
 from pathlib import Path
