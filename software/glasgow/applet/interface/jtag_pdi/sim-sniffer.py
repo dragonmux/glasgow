@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 from amaranth import *
 from amaranth.lib.fifo import AsyncFIFO
-from amaranth.compat import TSTriple
+from amaranth.lib.io import Pin
 from amaranth.sim import Simulator
 
 from sys import argv, path
@@ -22,9 +22,9 @@ class JTAGPads:
 			("srst", 1),
 		]
 
-		for pin, width in layout:
-			triple = TSTriple(width, name = pin)
-			setattr(self, f'{pin}_t', triple)
+		for name, width in layout:
+			pin = Pin(width, dir = 'io', name = name)
+			setattr(self, f'{name}_t', pin)
 
 pads = JTAGPads()
 dataFIFO = AsyncFIFO(width = 8, depth = 1024)
