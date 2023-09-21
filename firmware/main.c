@@ -8,6 +8,7 @@
 #include <fx2eeprom.h>
 #include <usbmicrosoft.h>
 #include "glasgow.h"
+#include "version.h"
 
 // bcdDevice is a 16-bit number where the high byte indicates the API revision and the low byte
 // indicates the hardware revision. If the firmware is not flashed (only the FX2 header is present)
@@ -145,7 +146,7 @@ usb_configuration_set_c usb_configs[] = {
 
 usb_ascii_string_c usb_strings[] = {
   [0] = "whitequark research\0\0\0\0", // 23 characters
-  [1] = "Glasgow Interface Explorer",
+  [1] = "Glasgow Interface Explorer (git " GIT_REVISION ")",
   [2] = "XX-XXXXXXXXXXXXXXXX",
   // Configurations
   [3] = "Pipe P at {2x512B EP2OUT/EP6IN}, Q at {2x512B EP4OUT/EP8IN}",
@@ -187,6 +188,13 @@ usb_desc_ms_ext_compat_id_c usb_ms_ext_compat_id = {
   }
 };
 
+usb_desc_ms_ext_property_c usb_ms_ext_properties = {
+  .dwLength         = sizeof(struct usb_desc_ms_ext_property),
+  .bcdVersion       = 0x0100,
+  .wIndex           = USB_DESC_MS_EXTENDED_PROPERTIES,
+  .wCount           = 0,
+};
+
 void handle_usb_get_descriptor(enum usb_descriptor type, uint8_t index) {
   if(type == USB_DESC_STRING && index == 0xEE) {
     xmemcpy(scratch, (__xdata void *)&usb_microsoft, usb_microsoft.bLength);
@@ -221,37 +229,6 @@ fail:
   xmemcpy((__xdata void *)glasgow_config.serial, (__xdata void *)"9999999999999999",
           sizeof(glasgow_config.serial));
   glasgow_config.bitstream_size = 0;
-}
-
-// Upgrade legacy revision encoding.
-static void config_fixup() {
-  __xdata uint8_t data;
-
-  switch(glasgow_config.revision) {
-    case 'A': glasgow_config.revision = GLASGOW_REV_A;  break;
-    case 'B': glasgow_config.revision = GLASGOW_REV_B;  break;
-    case 'C': glasgow_config.revision = GLASGOW_REV_C0; break;
-    default: return;
-  }
-
-  // Invalidate the old firmware (if any), since it will get confused if it sees new revision
-  // field contents.
-  data = 0x01; // I2C_400KHZ, no DISCON
-  eeprom_write(I2C_ADDR_FX2_MEM, 7,
-               (__xdata void *)&data, 1,
-               /*double_byte=*/true, /*page_size=*/8, /*timeout=*/255);
-  data = 0xC0; // C0 load
-  eeprom_write(I2C_ADDR_FX2_MEM, 0,
-               (__xdata void *)&data, 1,
-               /*double_byte=*/true, /*page_size=*/8, /*timeout=*/255);
-  // Update Device ID and revision fields.
-  data = glasgow_config.revision;
-  eeprom_write(I2C_ADDR_FX2_MEM, 5,
-               (__xdata void *)&data, 1,
-               /*double_byte=*/true, /*page_size=*/8, /*timeout=*/255);
-  eeprom_write(I2C_ADDR_FX2_MEM, 8 + 4 + __builtin_offsetof(struct glasgow_config, revision),
-               (__xdata void *)&data, 1,
-               /*double_byte=*/true, /*page_size=*/8, /*timeout=*/255);
 }
 
 // Populate descriptors from device configuration, if any.
@@ -823,18 +800,21 @@ void handle_pending_usb_setup() {
 
   // Microsoft descriptor requests
   if(req->bmRequestType == (USB_RECIP_DEVICE|USB_TYPE_VENDOR|USB_DIR_IN) &&
-     req->bRequest == USB_REQ_GET_MS_DESCRIPTOR) {
-    enum usb_descriptor_microsoft arg_desc = req->wIndex;
+     req->bRequest == USB_REQ_GET_MS_DESCRIPTOR &&
+     req->wIndex == USB_DESC_MS_EXTENDED_COMPAT_ID) {
     pending_setup = false;
 
-    switch(arg_desc) {
-      case USB_DESC_MS_EXTENDED_COMPAT_ID:
-        xmemcpy(scratch, (__xdata void *)&usb_ms_ext_compat_id, usb_ms_ext_compat_id.dwLength);
-        SETUP_EP0_IN_DESC(scratch);
-        return;
-    }
+    xmemcpy(scratch, (__xdata void *)&usb_ms_ext_compat_id, usb_ms_ext_compat_id.dwLength);
+    SETUP_EP0_IN_DESC(scratch);
+    return;
+  }
+  if(req->bmRequestType == (USB_RECIP_IFACE|USB_TYPE_VENDOR|USB_DIR_IN) &&
+     req->bRequest == USB_REQ_GET_MS_DESCRIPTOR &&
+     req->wIndex == USB_DESC_MS_EXTENDED_PROPERTIES) {
+    pending_setup = false;
 
-    STALL_EP0();
+    xmemcpy(scratch, (__xdata void *)&usb_ms_ext_properties, usb_ms_ext_properties.dwLength);
+    SETUP_EP0_IN_DESC(scratch);
     return;
   }
 
@@ -917,7 +897,6 @@ int main() {
 
   // Initialize subsystems.
   config_init();
-  config_fixup();
   descriptors_init();
   iobuf_init_dac_ldo();
 
