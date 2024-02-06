@@ -1,6 +1,5 @@
 on:
   push:
-    branches: main
   pull_request:
   merge_group:
 
@@ -8,36 +7,44 @@ name: CI
 jobs:
 
   test-software:
-    runs-on: ubuntu-22.04
     strategy:
       matrix:
+        os-version:
+        - ubuntu-latest
         python-version:
-        - '3.8'
         - '3.9'
         - '3.10'
         - '3.11'
-        - 'pypy-3.8'
         - 'pypy-3.9'
+        - 'pypy-3.10'
         allow-failure:
         - false
         include:
-        - python-version: '3.12-dev'
-          allow-failure: true
+          - os-version: ubuntu-20.04
+            python-version: '3.9.5' # shipped with 20.04 LTS
+            allow-failure: false
+          - os-version: ubuntu-latest
+            python-version: '3.12'
+            allow-failure: true
+          - os-version: ubuntu-latest
+            python-version: '3.13-dev'
+            allow-failure: true
     continue-on-error: '${{ matrix.allow-failure }}'
+    runs-on: ${{ matrix.os-version }}
     name: 'test-software (${{ matrix.python-version }})'
     steps:
-      - name: Preserve caches
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.cache/wasmtime
-            ~/.cache/YoWASP
-            ~/.cache/GlasgowEmbedded
-          key: ${{ runner.os }}
       - name: Check out source code
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
+      - name: Cache Glasgow build products
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/GlasgowEmbedded
+          key: Glasgow-${{ matrix.python-version }}-${{ hashFiles('./software/**') }}
+          restore-keys: |
+            Glasgow-${{ matrix.python-version }}-
+            Glasgow-
       - name: Set up PDM
         uses: pdm-project/setup-pdm@v3
         with:
@@ -45,16 +52,23 @@ jobs:
       - name: Install dependencies
         working-directory: ./software
         run: pdm install -G :all
+      - name: Cache YoWASP build products
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/YoWASP
+          key: YoWASP-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('./software/.venv/**/*.wasm') }}
+          restore-keys: |
+            YoWASP-${{ runner.os }}-${{ matrix.python-version }}-
+            YoWASP-${{ runner.os }}-
       - name: Run tests
         working-directory: ./software
-        env:
-          YOSYS: yowasp-yosys
-          NEXTPNR_ICE40: yowasp-nextpnr-ice40
-          ICEPACK: yowasp-icepack
-        run: pdm run test
+        run: |
+          pdm run glasgow --help
+          pdm run glasgow build --rev C3 uart
+          pdm run test
 
   build-firmware:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     steps:
       - name: Check out source code
         uses: actions/checkout@v3
@@ -71,11 +85,96 @@ jobs:
         working-directory: ./firmware
         run: make
 
-  required: # group all `test (*)` workflows into one for the required status check
+  build-manual:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: docs/manual
+    steps:
+      - name: Check out source code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      - name: Set up PDM
+        uses: pdm-project/setup-pdm@v3
+      - name: Install dependencies
+        run: |
+          pdm install
+      - name: Build documentation
+        env:
+          DOCS_IS_PRODUCTION: ${{ (github.repository == 'GlasgowEmbedded/glasgow' && github.event.ref == 'refs/heads/main') && 'yes' || 'no' }}
+        run: |
+          pdm run build
+      - name: Upload documentation archive
+        uses: actions/upload-artifact@v3
+        with:
+          name: docs
+          path: docs/manual/out
+
+  required: # group all required workflows into one to avoid reconfiguring this in Actions settings
     needs:
       - test-software
       - build-firmware
+      - build-manual
     runs-on: ubuntu-latest
     steps:
       - run: |
           true
+
+  publish-manual:
+    needs: build-manual
+    if: (github.repository == 'GlasgowEmbedded/glasgow' && github.event.ref == 'refs/heads/main') || github.repository != 'GlasgowEmbedded/glasgow'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out source code
+        uses: actions/checkout@v3
+      - if: github.repository == 'GlasgowEmbedded/glasgow' && github.event.ref == 'refs/heads/main'
+        name: Inject documentation from artifact under latest/
+        uses: actions/download-artifact@v3
+        with:
+          name: docs
+          path: pages/latest/
+      - if: github.repository == 'GlasgowEmbedded/glasgow' && github.event.ref == 'refs/heads/main'
+        name: Add CNAME and redirect from the root to latest/
+        run: |
+          echo >pages/CNAME 'glasgow-embedded.org'
+          cat >pages/index.html <<END
+          <!DOCTYPE html>
+          <html lang="en-US">
+            <meta charset="utf-8">
+            <title>Redirecting&hellip;</title>
+            <link rel="canonical" href="latest/intro.html">
+            <script>location="latest/intro.html"</script>
+            <meta http-equiv="refresh" content="0; url=latest/intro.html">
+            <meta content="Glasgow Interface Explorer" name="og:title" />
+            <meta content="website" name="og:type" />
+            <meta content="https://glasgow-embedded.org/" name="og:url" />
+            <meta content="A highly capable and extremely flexible open source multitool for digital electronics" name="og:description" />
+            <meta content="https://www.crowdsupply.com/img/f9a9/glasgow-revc2_jpg_open-graph.jpg" name="og:image" />
+            <meta content="A Glasgow Interface Explorer PCB, without a case" name="og:image:alt" />
+            <meta content="Glasgow Interface Explorer" name="twitter:title" />
+            <meta content="summary_large_image" name="twitter:card" />
+            <meta content="A highly capable and extremely flexible open source multitool for digital electronics" name="twitter:description" />
+            <meta content="https://www.crowdsupply.com/img/f9a9/glasgow-revc2_jpg_project-main.jpg" name="twitter:image" />
+            <meta content="A Glasgow Interface Explorer PCB, without a case" name="twitter:image:alt" />
+            <h1>Redirecting&hellip;</h1>
+            <a href="latest/intro.html">Click here if you are not redirected.</a>
+          </html>
+          END
+      - if: github.repository != 'GlasgowEmbedded/glasgow'
+        name: Inject documentation from artifact under {branch}/
+        uses: actions/download-artifact@v3
+        with:
+          name: docs
+          path: pages/${{ github.ref_name }}/
+      - name: Disable Jekyll
+        run: |
+          touch pages/.nojekyll
+      - name: Publish documentation for a branch
+        uses: JamesIves/github-pages-deploy-action@releases/v4
+        with:
+          folder: pages/
+          clean: ${{ github.repository == 'GlasgowEmbedded/glasgow' && github.event.ref == 'refs/heads/main' }}
+          single-commit: true

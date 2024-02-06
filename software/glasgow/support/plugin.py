@@ -1,3 +1,5 @@
+import re
+import sys
 import importlib.metadata
 import packaging.requirements
 import pathlib
@@ -8,6 +10,35 @@ import textwrap
 __all__ = ["PluginRequirementsUnmet", "PluginMetadata"]
 
 
+# TODO(py3.10): remove
+# Ubuntu 20.04 ships an outdated Python version with a serious bug impacting importlib.metadata:
+# https://github.com/python/importlib_metadata/issues/369
+# It is a pain to update Python on that Ubuntu version, so just patch it here to match the fixed
+# method from the later version. The same bug affects >=3.10.0 <3.10.3, but installation of these
+# versions is prohibited in pyproject.toml to avoid excessive CI matrix size.
+if sys.version_info >= (3, 9, 0) and sys.version_info < (3, 9, 11):
+    @property
+    def _EntryPoint_extras(self):
+        match = self.pattern.match(self.value)
+        return re.findall(r'\w+', match.group('extras') or '')
+    importlib.metadata.EntryPoint.extras = _EntryPoint_extras
+
+
+# There are subtle differences between Python versions for both importlib.metadata (the built-in
+# package) and importlib_metadata (the PyPI installable shim), so implement this function the way
+# we need ourselves based on the Python 3.9 API. Once we drop Python 3.9 support this abomination
+# can be removed.
+def _entry_points(*, group, name=None):
+    for distribution in importlib.metadata.distributions():
+        if not hasattr(distribution, "name"):
+            distribution.name = distribution.metadata["Name"]
+        for entry_point in distribution.entry_points:
+            if entry_point.group == group and (name is None or entry_point.name == name):
+                if not hasattr(entry_point, "dist"):
+                    entry_point.dist = distribution
+                yield entry_point
+
+
 def _requirements_for_optional_dependencies(distribution, depencencies):
     requirements = map(packaging.requirements.Requirement, distribution.requires)
     selected_requirements = set()
@@ -15,7 +46,7 @@ def _requirements_for_optional_dependencies(distribution, depencencies):
         for requirement in requirements:
             if requirement.marker and requirement.marker.evaluate({"extra": dependency}):
                 requirement = packaging.requirements.Requirement(str(requirement))
-                requirement.marker = ""
+                requirement.marker = None
                 selected_requirements.add(requirement)
     return selected_requirements
 
@@ -64,11 +95,12 @@ class PluginMetadata:
 
     @classmethod
     def get(cls, handle):
-        return cls(importlib.metadata.entry_points(group=cls.GROUP_NAME, name=handle)[0])
+        entry_point, *_ = _entry_points(group=cls.GROUP_NAME, name=handle)
+        return cls(entry_point)
 
     @classmethod
     def all(cls):
-        return {ep.name: cls(ep) for ep in importlib.metadata.entry_points(group=cls.GROUP_NAME)}
+        return {ep.name: cls(ep) for ep in _entry_points(group=cls.GROUP_NAME)}
 
     def __init__(self, entry_point):
         if entry_point.dist.name != "glasgow":

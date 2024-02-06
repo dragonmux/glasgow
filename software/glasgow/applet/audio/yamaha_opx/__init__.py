@@ -147,6 +147,7 @@ import io
 from amaranth import *
 from amaranth.lib import data
 from amaranth.lib.cdc import FFSynchronizer
+from urllib.parse import urlparse
 
 from ....gateware.pads import *
 from ....gateware.clockgen import *
@@ -814,18 +815,21 @@ class YamahaVGMStreamPlayer(VGMStreamPlayer):
 
 
 class YamahaOPxWebInterface:
-    def __init__(self, logger, opx_iface, set_voltage):
+    def __init__(self, logger, opx_iface, set_voltage, allow_urls):
         self._logger    = logger
         self._opx_iface = opx_iface
         self._lock      = asyncio.Lock()
 
         self._set_voltage = set_voltage
+        self._allow_urls = allow_urls
 
     async def serve_index(self, request):
         with open(os.path.join(os.path.dirname(__file__), "index.html")) as f:
             index_html = f.read()
             index_html = index_html.replace("{{chip}}", self._opx_iface.chips[-1])
             index_html = index_html.replace("{{compat}}", ", ".join(self._opx_iface.chips))
+            index_html = index_html.replace("{{url_display}}",
+                                            "block" if self._allow_urls else "none")
             return aiohttp.web.Response(text=index_html, content_type="text/html")
 
     async def serve_vgm(self, request):
@@ -840,6 +844,11 @@ class YamahaOPxWebInterface:
         elif vgm_msg.type == aiohttp.WSMsgType.TEXT:
             self._logger.info("web: URL %s submitted by %s",
                               vgm_msg.data, request.remote)
+
+            if not self._allow_urls:
+                self._logger.warning("Received URL submission when disabled")
+                await sock.close(code=405, message="URL submissions not allowed")
+                return sock
 
             async with aiohttp.ClientSession() as client_sess:
                 async with client_sess.get(vgm_msg.data) as client_resp:
@@ -1006,7 +1015,8 @@ class YamahaOPxWebInterface:
         runner = aiohttp.web.AppRunner(app,
             access_log_format='%a(%{X-Forwarded-For}i) "%r" %s "%{Referer}i" "%{User-Agent}i"')
         await runner.setup()
-        site = aiohttp.web.TCPSite(runner, *endpoint.split(":", 1))
+        parsed_endpoint = urlparse(f"//{endpoint}")
+        site = aiohttp.web.TCPSite(runner, parsed_endpoint.hostname, parsed_endpoint.port)
         await site.start()
         await asyncio.Future()
 
@@ -1162,6 +1172,9 @@ class AudioYamahaOPxApplet(GlasgowApplet):
         p_web = p_operation.add_parser(
             "web", help="expose Yamaha hardware via a web interface")
         p_web.add_argument(
+            "--allow-urls", action='store_true',
+            help="allow users to specify a URL to play a VGM/VGZ file from (use with caution)")
+        p_web.add_argument(
             "endpoint", metavar="ENDPOINT", type=str, default="localhost:8080",
             help="listen for requests on ENDPOINT (default: %(default)s)")
 
@@ -1215,7 +1228,7 @@ class AudioYamahaOPxApplet(GlasgowApplet):
         if args.operation == "web":
             async def set_voltage(voltage):
                 await device.set_voltage(args.port_spec, voltage)
-            web_iface = YamahaOPxWebInterface(self.logger, opx_iface, set_voltage=set_voltage)
+            web_iface = YamahaOPxWebInterface(self.logger, opx_iface, set_voltage, args.allow_urls)
             await web_iface.serve(args.endpoint)
 
         if args.operation == "run":
