@@ -3,6 +3,7 @@ from amaranth import *
 from amaranth.lib.io import Pin
 
 from ..gateware.pads import Pads
+from ..target.analyzer import GlasgowAnalyzer
 
 
 __all__  = ["AccessArguments"]
@@ -43,7 +44,7 @@ class AccessMultiplexer(Elaboratable, metaclass=ABCMeta):
 
 
 class AccessMultiplexerInterface(Elaboratable, metaclass=ABCMeta):
-    def __init__(self, applet, analyzer):
+    def __init__(self, applet, analyzer : GlasgowAnalyzer):
         self.applet   = applet
         self.logger   = applet.logger
         self.analyzer = analyzer

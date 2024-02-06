@@ -2,7 +2,8 @@ import logging
 from amaranth import *
 
 from .. import AccessMultiplexer, AccessMultiplexerInterface
-
+from ...gateware.fx2_crossbar import FX2Crossbar
+from ...target.analyzer import GlasgowAnalyzer
 
 class _FIFOReadPort(Elaboratable):
     """
@@ -153,7 +154,7 @@ class DirectMultiplexer(AccessMultiplexer):
 
 
 class DirectMultiplexerInterface(AccessMultiplexerInterface):
-    def __init__(self, applet, analyzer, registers, fx2_crossbar, pipe_num, pins,
+    def __init__(self, applet, analyzer : GlasgowAnalyzer, registers, fx2_crossbar : FX2Crossbar, pipe_num, pins,
                  throttle):
         assert throttle in ("full", "fifo", "none")
 

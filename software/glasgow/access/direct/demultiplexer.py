@@ -337,8 +337,8 @@ class DirectDemultiplexerInterface(AccessDemultiplexerInterface):
         # This provides predictable write behavior; only _packets_per_xfer packet writes are
         # automatically submitted, and only the minimum necessary number of tasks are scheduled on
         # calls to `write`.
-        while len(self._out_tasks) < _xfers_per_queue and \
-                    len(self._out_buffer) >= self._out_threshold:
+        while (len(self._out_tasks) < _xfers_per_queue and
+                len(self._out_buffer) >= self._out_threshold):
             self._out_tasks.submit(self._out_task(self._out_slice()))
 
     async def flush(self, wait=True):
