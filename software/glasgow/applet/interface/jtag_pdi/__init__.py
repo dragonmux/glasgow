@@ -62,6 +62,7 @@ class JTAGPDIApplet(GlasgowApplet):
 			PDIOpcodes.REPEAT: self._handle_repeat,
 			PDIOpcodes.KEY: self._handle_key,
 		}
+		self.__repeatCount = 0
 
 	@classmethod
 	def add_build_arguments(cls, parser : argparse.ArgumentParser, access):
@@ -484,7 +485,7 @@ class JTAGPDIApplet(GlasgowApplet):
 
 		response = None
 		while response != 'exit':
-			print("> ", flush=True, end='')
+			print("> ", flush = True, end = '')
 			response = stdin.readline().strip()
 			if response == '':
 				continue
@@ -497,9 +498,9 @@ class JTAGPDIApplet(GlasgowApplet):
 			operation, readCount = command
 			await iface.write([Header.PDI] + operation)
 			if readCount != 0:
-				result = bytes(await iface.read())
-			result = bytes(await iface.read(length = readCount))
-			self.logger.info(f'Recieved {result}')
+				result = (await iface.read()).tobytes()
+			result = (await iface.read(length = readCount)).tobytes()
+			self.logger.info(f'Recieved {result!r}')
 
 	async def interact(self, device : GlasgowHardwareDevice, args : argparse.Namespace, iface : JTAGPDIInterface):
 		if args.raw_file:

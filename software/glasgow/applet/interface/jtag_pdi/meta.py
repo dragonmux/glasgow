@@ -1,9 +1,15 @@
-__all__ = ('to_int8', 'to_in32_be', 'decode_device_id_code')
+from typing import Optional
 
-def to_int8(bytes : bytes):
+__all__ = ('to_int8', 'to_int32_be', 'decode_device_id_code')
+
+def to_int8(bytes : Optional[memoryview]):
+	if bytes is None:
+		raise ValueError()
 	return bytes[0]
 
-def to_int32_be(bytes : bytes):
+def to_int32_be(bytes : Optional[memoryview]):
+	if bytes is None:
+		raise ValueError()
 	return (
 		(bytes[0] << 24) |
 		(bytes[1] << 16) |
@@ -22,7 +28,7 @@ avr_idcode = {
 	0x9842: 'ATXMega256A3U',
 }
 
-def decode_device_id_code(bytes : bytes):
+def decode_device_id_code(bytes : Optional[memoryview]):
 	idCode = to_int32_be(bytes)
 	version = (idCode >> 28) & 0xF
 	part = (idCode >> 12) & 0xFFFF
