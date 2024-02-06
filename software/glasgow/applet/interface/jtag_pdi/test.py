@@ -12,8 +12,11 @@ from . import JTAGPDIApplet, JTAGPDIInterface, Header
 class PDIAppletTestCase(GlasgowAppletTestCase, applet = JTAGPDIApplet):
 	@synthesis_test
 	def test_build(self):
+		from os import remove
+
 		self.assertBuilds()
-		self.assertBuilds(args = ["--raw-vcd", "file"])
+		self.assertBuilds(args = ["--raw-vcd", "test.file"])
+		remove('test.file')
 
 	def setup_simulation(self):
 		self.build_simulated_applet()
