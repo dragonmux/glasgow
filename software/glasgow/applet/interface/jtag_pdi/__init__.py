@@ -510,7 +510,8 @@ class JTAGPDIApplet(GlasgowApplet):
 
 # -------------------------------------------------------------------------------------------------
 
-class PDIAppletTestCase(GlasgowAppletTestCase, applet=JTAGPDIApplet):
+class PDIAppletTestCase(GlasgowAppletTestCase, applet = JTAGPDIApplet):
 	@synthesis_test
 	def test_build(self):
 		self.assertBuilds()
+		self.assertBuilds(args = ["--raw-vcd", "file"])
