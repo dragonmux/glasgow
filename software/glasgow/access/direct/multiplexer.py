@@ -1,12 +1,12 @@
 import logging
 from amaranth import *
 
-from .. import AccessMultiplexer, AccessMultiplexerInterface
+from .. import AccessMultiplexer, AccessMultiplexerInterface, AccessMultiplexerInFIFO, AccessMultiplexerOutFIFO
 from ...gateware.fx2_crossbar import FX2Crossbar, _INFIFO, _OUTFIFO
 from ...gateware.registers import Registers
 from ...target.analyzer import GlasgowAnalyzer
 
-class _FIFOReadPort(Elaboratable):
+class _FIFOReadPort(AccessMultiplexerOutFIFO):
     """
     FIFO read port wrapper with control enable and data enable signals.
 
@@ -44,7 +44,7 @@ class _FIFOReadPort(Elaboratable):
         return m
 
 
-class _FIFOWritePort(Elaboratable):
+class _FIFOWritePort(AccessMultiplexerInFIFO):
     """
     FIFO write port wrapper with control enable and data enable signals.
 
@@ -207,7 +207,7 @@ class DirectMultiplexerInterface(AccessMultiplexerInterface):
         pin_parts = req(bit)
         self._pin_tristates.append((pin_parts, oe, o, i))
 
-    def get_in_fifo(self, **kwargs):
+    def get_in_fifo(self, **kwargs) -> AccessMultiplexerInFIFO:
         fifo = self._fx2_crossbar.get_in_fifo(self._pipe_num, **kwargs, reset=self.reset)
         if self.analyzer:
             self.analyzer.add_in_fifo_event(self.applet, fifo)
@@ -215,7 +215,7 @@ class DirectMultiplexerInterface(AccessMultiplexerInterface):
         self._fifos.append(fifo)
         return fifo
 
-    def get_out_fifo(self, **kwargs):
+    def get_out_fifo(self, **kwargs) -> AccessMultiplexerOutFIFO:
         fifo = self._fx2_crossbar.get_out_fifo(self._pipe_num, **kwargs, reset=self.reset)
         if self.analyzer:
             self.analyzer.add_out_fifo_event(self.applet, fifo)

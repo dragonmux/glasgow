@@ -44,6 +44,22 @@ class AccessMultiplexer(Elaboratable, metaclass=ABCMeta):
     def claim_interface(self, applet, args, with_analyzer=True) -> 'AccessMultiplexerInterface':
         pass
 
+class AccessMultiplexerInFIFO(Elaboratable):
+    width: int
+    depth: int
+
+    w_en: Signal
+    w_rdy: Signal
+    w_data: Signal
+    flush: Signal
+
+class AccessMultiplexerOutFIFO(Elaboratable):
+    width: int
+    depth: int
+
+    r_en: Signal
+    r_rdy: Signal
+    r_data: Signal
 
 class AccessMultiplexerInterface(Elaboratable, metaclass=ABCMeta):
     _pipe_num: int
@@ -57,11 +73,11 @@ class AccessMultiplexerInterface(Elaboratable, metaclass=ABCMeta):
         self.pads     = None
 
     @abstractmethod
-    def get_out_fifo(self, **kwargs):
+    def get_in_fifo(self, **kwargs) -> AccessMultiplexerInFIFO:
         pass
 
     @abstractmethod
-    def get_in_fifo(self, **kwargs):
+    def get_out_fifo(self, **kwargs) -> AccessMultiplexerOutFIFO:
         pass
 
     def get_inout_fifo(self, **kwargs):
