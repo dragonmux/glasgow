@@ -21,8 +21,8 @@
 
 import struct
 import logging
-import asyncio
 import argparse
+import enum
 from amaranth import *
 from amaranth.lib.cdc import FFSynchronizer
 
@@ -33,6 +33,47 @@ from ....gateware.pads import *
 from ....database.jedec import *
 from ....arch.jtag import *
 from ... import *
+
+
+class JTAGState(str, enum.Enum):
+    # The names are JTAG SVF state names; the values are IEEE names.
+    UNKNOWN = "Unknown"
+    RESET = "Test-Logic-Reset"
+    IDLE = "Run-Test/Idle"
+    DRSELECT = "Select-DR-Scan"
+    DRCAPTURE = "Capture-DR"
+    DRSHIFT = "Shift-DR"
+    DREXIT1 = "Exit1-DR"
+    DRPAUSE = "Pause-DR"
+    DREXIT2 = "Exit2-DR"
+    DRUPDATE = "Update-DR"
+    IRSELECT = "Select-IR-Scan"
+    IRCAPTURE = "Capture-IR"
+    IRSHIFT = "Shift-IR"
+    IREXIT1 = "Exit1-IR"
+    IRPAUSE = "Pause-IR"
+    IREXIT2 = "Exit2-IR"
+    IRUPDATE = "Update-IR"
+
+
+JTAG_TRANSITIONS = {
+    JTAGState.RESET: (JTAGState.IDLE, JTAGState.RESET),
+    JTAGState.IDLE: (JTAGState.IDLE, JTAGState.DRSELECT),
+    JTAGState.DRSELECT: (JTAGState.DRCAPTURE, JTAGState.IRSELECT),
+    JTAGState.DRCAPTURE: (JTAGState.DRSHIFT, JTAGState.DREXIT1),
+    JTAGState.DRSHIFT: (JTAGState.DRSHIFT, JTAGState.DREXIT1),
+    JTAGState.DREXIT1: (JTAGState.DRPAUSE, JTAGState.DRUPDATE),
+    JTAGState.DRPAUSE: (JTAGState.DRPAUSE, JTAGState.DREXIT2),
+    JTAGState.DREXIT2: (JTAGState.DRSHIFT, JTAGState.DRUPDATE),
+    JTAGState.DRUPDATE: (JTAGState.IDLE, JTAGState.DRSELECT),
+    JTAGState.IRSELECT: (JTAGState.IRCAPTURE, JTAGState.RESET),
+    JTAGState.IRCAPTURE: (JTAGState.IRSHIFT, JTAGState.IREXIT1),
+    JTAGState.IRSHIFT: (JTAGState.IRSHIFT, JTAGState.IREXIT1),
+    JTAGState.IREXIT1: (JTAGState.IRPAUSE, JTAGState.IRUPDATE),
+    JTAGState.IRPAUSE: (JTAGState.IRPAUSE, JTAGState.IREXIT2),
+    JTAGState.IREXIT2: (JTAGState.IRSHIFT, JTAGState.IRUPDATE),
+    JTAGState.IRUPDATE: (JTAGState.IDLE, JTAGState.DRSELECT),
+}
 
 
 class JTAGProbeBus(Elaboratable):
@@ -286,7 +327,7 @@ class JTAGProbeInterface:
         self._level  = logging.DEBUG if self._logger.name == __name__ else logging.TRACE
 
         self.has_trst    = has_trst
-        self._state      = "Unknown"
+        self._state      = JTAGState.UNKNOWN
         self._current_ir = None
 
     def _log_l(self, message, *args):
@@ -332,12 +373,12 @@ class JTAGProbeInterface:
 
     def _shift_last(self, last):
         if last:
-            if self._state == "Shift-IR":
+            if self._state == JTAGState.IRSHIFT:
                 self._log_l("state Shift-IR → Exit1-IR")
-                self._state = "Exit1-IR"
-            elif self._state == "Shift-DR":
+                self._state = JTAGState.IREXIT1
+            elif self._state == JTAGState.DRSHIFT:
                 self._log_l("state Shift-DR → Exit1-DR")
-                self._state = "Exit1-DR"
+                self._state = JTAGState.DREXIT1
 
     @staticmethod
     def _chunk_count(count, last, chunk_size=0xffff):
@@ -361,7 +402,7 @@ class JTAGProbeInterface:
                 CMD_SHIFT_TDIO|(BIT_LAST if chunk_last else 0), count))
 
     async def shift_tdio(self, tdi_bits, *, prefix=0, suffix=0, last=True):
-        assert self._state in ("Shift-IR", "Shift-DR")
+        assert self._state in (JTAGState.IRSHIFT, JTAGState.DRSHIFT)
         tdi_bits = bits(tdi_bits)
         tdo_bits = bits()
         self._log_l("shift tdio-i=%d,<%s>,%d", prefix, dump_bin(tdi_bits), suffix)
@@ -380,7 +421,7 @@ class JTAGProbeInterface:
         return tdo_bits
 
     async def shift_tdi(self, tdi_bits, *, prefix=0, suffix=0, last=True):
-        assert self._state in ("Shift-IR", "Shift-DR")
+        assert self._state in (JTAGState.IRSHIFT, JTAGState.DRSHIFT)
         tdi_bits = bits(tdi_bits)
         self._log_l("shift tdi=%d,<%s>,%d", prefix, dump_bin(tdi_bits), suffix)
         await self._shift_dummy(prefix)
@@ -394,7 +435,7 @@ class JTAGProbeInterface:
         self._shift_last(last)
 
     async def shift_tdo(self, count, *, prefix=0, suffix=0, last=True):
-        assert self._state in ("Shift-IR", "Shift-DR")
+        assert self._state in (JTAGState.IRSHIFT, JTAGState.DRSHIFT)
         tdo_bits = bits()
         await self._shift_dummy(prefix)
         for count, chunk_last in self._chunk_count(count, last and suffix == 0):
@@ -409,7 +450,7 @@ class JTAGProbeInterface:
         return tdo_bits
 
     async def pulse_tck(self, count):
-        assert self._state in ("Run-Test/Idle", "Pause-IR", "Pause-DR")
+        assert self._state in (JTAGState.IDLE, JTAGState.IRPAUSE, JTAGState.DRPAUSE)
         self._log_l("pulse tck count=%d", count)
         for count, last in self._chunk_count(count, last=True):
             await self.lower.write(struct.pack("<BH",
@@ -417,112 +458,135 @@ class JTAGProbeInterface:
 
     # State machine transitions
 
-    def _state_error(self, new_state):
+    def _state_error(self, new_state, old_state=None):
+        if old_state is None:
+            old_state = self._state
         raise JTAGProbeStateTransitionError("cannot transition from state {} to {}",
-                                            self._state, new_state)
+                                            old_state.value, new_state.value)
+
+    def get_state(self):
+        return self._state
 
     async def enter_test_logic_reset(self, force=True):
         if force:
             self._log_l("state * → Test-Logic-Reset")
-        elif self._state != "Test-Logic-Reset":
-            self._log_l("state %s → Test-Logic-Reset", self._state)
+        elif self._state != JTAGState.RESET:
+            self._log_l("state %s → Test-Logic-Reset", self._state.value)
         else:
             return
 
         await self.shift_tms((1,1,1,1,1))
-        self._state = "Test-Logic-Reset"
+        self._state = JTAGState.RESET
 
     async def enter_run_test_idle(self):
-        if self._state == "Run-Test/Idle": return
+        if self._state == JTAGState.IDLE: return
 
-        self._log_l("state %s → Run-Test/Idle", self._state)
-        if self._state == "Test-Logic-Reset":
+        self._log_l("state %s → Run-Test/Idle", self._state.value)
+        if self._state == JTAGState.RESET:
             await self.shift_tms((0,))
-        elif self._state in ("Exit1-IR", "Exit1-DR"):
+        elif self._state in (JTAGState.IREXIT1, JTAGState.DREXIT1):
             await self.shift_tms((1,0))
-        elif self._state in ("Pause-IR", "Pause-DR"):
+        elif self._state in (JTAGState.IRPAUSE, JTAGState.DRPAUSE):
             await self.shift_tms((1,1,0))
-        elif self._state in ("Update-IR", "Update-DR"):
+        elif self._state in (JTAGState.IRUPDATE, JTAGState.DRUPDATE):
             await self.shift_tms((0,))
         else:
-            self._state_error("Run-Test/Idle")
-        self._state = "Run-Test/Idle"
+            self._state_error(JTAGState.IDLE)
+        self._state = JTAGState.IDLE
 
     async def enter_shift_ir(self):
-        if self._state == "Shift-IR": return
+        if self._state == JTAGState.IRSHIFT: return
 
-        self._log_l("state %s → Shift-IR", self._state)
-        if self._state == "Test-Logic-Reset":
+        self._log_l("state %s → Shift-IR", self._state.value)
+        if self._state == JTAGState.RESET:
             await self.shift_tms((0,1,1,0,0))
-        elif self._state in ("Run-Test/Idle", "Update-IR", "Update-DR"):
+        elif self._state in (JTAGState.IDLE, JTAGState.IRUPDATE, JTAGState.DRUPDATE):
             await self.shift_tms((1,1,0,0))
-        elif self._state in ("Pause-DR"):
+        elif self._state == JTAGState.DRPAUSE:
             await self.shift_tms((1,1,1,1,0,0))
-        elif self._state in ("Pause-IR"):
+        elif self._state == JTAGState.IRPAUSE:
             await self.shift_tms((1,0))
         else:
-            self._state_error("Shift-IR")
-        self._state = "Shift-IR"
+            self._state_error(JTAGState.IRSHIFT)
+        self._state = JTAGState.IRSHIFT
 
     async def enter_pause_ir(self):
-        if self._state == "Pause-IR": return
+        if self._state == JTAGState.IRPAUSE: return
 
-        self._log_l("state %s → Pause-IR", self._state)
-        if self._state == "Exit1-IR":
+        self._log_l("state %s → Pause-IR", self._state.value)
+        if self._state == JTAGState.IREXIT1:
             await self.shift_tms((0,))
         else:
-            self._state_error("Pause-IR")
-        self._state = "Pause-IR"
+            self._state_error(JTAGState.IRPAUSE)
+        self._state = JTAGState.IRPAUSE
 
     async def enter_update_ir(self):
-        if self._state == "Update-IR": return
+        if self._state == JTAGState.IRUPDATE: return
 
-        self._log_l("state %s → Update-IR", self._state)
-        if self._state == "Shift-IR":
+        self._log_l("state %s → Update-IR", self._state.value)
+        if self._state == JTAGState.IRSHIFT:
             await self.shift_tms((1,1))
-        elif self._state == "Exit1-IR":
+        elif self._state == JTAGState.IREXIT1:
             await self.shift_tms((1,))
         else:
-            self._state_error("Update-IR")
-        self._state = "Update-IR"
+            self._state_error(JTAGState.IRUPDATE)
+        self._state = JTAGState.IRUPDATE
 
     async def enter_shift_dr(self):
-        if self._state == "Shift-DR": return
+        if self._state == JTAGState.DRSHIFT: return
 
-        self._log_l("state %s → Shift-DR", self._state)
-        if self._state == "Test-Logic-Reset":
+        self._log_l("state %s → Shift-DR", self._state.value)
+        if self._state == JTAGState.RESET:
             await self.shift_tms((0,1,0,0))
-        elif self._state in ("Run-Test/Idle", "Update-IR", "Update-DR"):
+        elif self._state in (JTAGState.IDLE, JTAGState.IRUPDATE, JTAGState.DRUPDATE):
             await self.shift_tms((1,0,0))
-        elif self._state in ("Pause-IR"):
+        elif self._state == JTAGState.IRPAUSE:
             await self.shift_tms((1,1,1,0,0))
-        elif self._state in ("Pause-DR"):
+        elif self._state == JTAGState.DRPAUSE:
             await self.shift_tms((1,0))
         else:
-            self._state_error("Shift-DR")
-        self._state = "Shift-DR"
+            self._state_error(JTAGState.DRSHIFT)
+        self._state = JTAGState.DRSHIFT
 
     async def enter_pause_dr(self):
-        if self._state == "Pause-DR": return
+        if self._state == JTAGState.DRPAUSE: return
 
-        self._log_l("state %s → Pause-DR", self._state)
-        if self._state == "Exit1-DR":
+        self._log_l("state %s → Pause-DR", self._state.value)
+        if self._state == JTAGState.DREXIT1:
             await self.shift_tms((0,))
         else:
-            self._state_error("Pause-DR")
-        self._state = "Pause-DR"
+            self._state_error(JTAGState.DRPAUSE)
+        self._state = JTAGState.DRPAUSE
 
     async def enter_update_dr(self):
-        if self._state == "Update-DR": return
+        if self._state == JTAGState.DRUPDATE: return
 
-        self._log_l("state %s → Update-DR", self._state)
-        if self._state == "Shift-DR":
+        self._log_l("state %s → Update-DR", self._state.value)
+        if self._state == JTAGState.DRSHIFT:
             await self.shift_tms((1,1))
-        elif self._state == "Exit1-DR":
+        elif self._state == JTAGState.DREXIT1:
             await self.shift_tms((1,))
         else:
-            self._state_error("Update-DR")
-        self._state = "Update-DR"
+            self._state_error(JTAGState.DRUPDATE)
+        self._state = JTAGState.DRUPDATE
+
+    async def traverse_state_path(self, path):
+        if not path:
+            return
+        self._log_l(f"state {self._state.value} → {' → '.join(s.value for s in path)}")
+        state = self._state
+        bits = []
+        for target in path:
+            assert isinstance(state, JTAGState)
+            if JTAG_TRANSITIONS[state][0] == target:
+                bits.append(0)
+            elif JTAG_TRANSITIONS[state][1] == target:
+                bits.append(1)
+            else:
+                self._state_error(target, state)
+            state = target
+        await self.shift_tms(bits)
+        self._state = state
 
     # High-level register manipulation
 
@@ -632,11 +696,11 @@ class JTAGProbeInterface:
             if value is None:
                 self._log_h("scan %s overlong", xr)
                 if check:
-                    raise JTAGProbeError("{} shift chain is too long".format(xr.upper()))
+                    raise JTAGProbeError(f"{xr.upper()} shift chain is too long")
             elif len(value) == 0:
                 self._log_h("scan %s empty", xr)
                 if check:
-                    raise JTAGProbeError("{} shift chain is empty".format(xr.upper()))
+                    raise JTAGProbeError(f"{xr.upper()} shift chain is empty")
             else:
                 self._log_h("scan %s length=%d data=<%s>",
                             xr, length, dump_bin(data_0[:length]))
@@ -788,7 +852,7 @@ class JTAGProbeInterface:
             for ir_start0, ir_start1 in zip(ir_starts, ir_starts[1:] + [len(ir_value)]):
                 ir_chunks.append(ir_start1 - ir_start0)
             self._log_h("ambiguous ir taps=%d chunks=[%s]",
-                        tap_count, ",".join("{:d}".format(chunk) for chunk in ir_chunks))
+                        tap_count, ",".join(f"{chunk:d}" for chunk in ir_chunks))
             if check:
                 raise JTAGProbeError("IR capture insufficiently constrains IR lengths")
             return
@@ -818,6 +882,9 @@ class TAPInterface:
         self._ir_suffix = ir_suffix
         self._dr_prefix = dr_prefix
         self._dr_suffix = dr_suffix
+
+    async def flush(self):
+        await self.lower.flush()
 
     async def test_reset(self):
         await self.lower.test_reset()
@@ -1054,7 +1121,7 @@ class JTAGProbeApplet(GlasgowApplet):
 
                 tap_iface = TAPInterface.from_layout(jtag_iface, ir_layout, index=tap_index)
                 for ir_value in range(0, (1 << ir_length)):
-                    ir_value = bits(ir_value & (1 << bit) for bit in range(ir_length))
+                    ir_value = bits(ir_value, ir_length)
                     await tap_iface.test_reset()
                     await tap_iface.write_ir(ir_value)
                     dr_value = await tap_iface.scan_dr(check=False)
@@ -1100,132 +1167,7 @@ class JTAGProbeApplet(GlasgowApplet):
             run_callback=jtag_iface.flush
         ).interact()
 
-# -------------------------------------------------------------------------------------------------
-
-import unittest
-
-
-class JTAGInterrogationTestCase(unittest.TestCase):
-    def setUp(self):
-        self.iface = JTAGProbeInterface(interface=None, logger=JTAGProbeApplet.logger)
-
-    def test_dr_empty(self):
-        self.assertEqual(self.iface.interrogate_dr(bits("")), [])
-
-    def test_dr_bypass(self):
-        self.assertEqual(self.iface.interrogate_dr(bits("0")), [None])
-
-    def test_dr_idcode(self):
-        dr = bits("00111011101000000000010001110111")
-        self.assertEqual(self.iface.interrogate_dr(dr), [0x3ba00477])
-
-    def test_dr_truncated(self):
-        dr = bits("0011101110100000000001000111011")
-        with self.assertRaisesRegex(JTAGProbeError,
-                r"^TAP #0 has truncated DR IDCODE=<1101110001000000000010111011100>$"):
-            self.iface.interrogate_dr(dr)
-        self.assertEqual(self.iface.interrogate_dr(dr, check=False), None)
-
-    def test_dr_bypass_idcode(self):
-        dr = bits("001110111010000000000100011101110")
-        self.assertEqual(self.iface.interrogate_dr(dr), [None, 0x3ba00477])
-
-    def test_dr_idcode_bypass(self):
-        dr = bits("000111011101000000000010001110111")
-        self.assertEqual(self.iface.interrogate_dr(dr), [0x3ba00477, None])
-
-    def test_dr_invalid(self):
-        dr = bits("00000000000000000000000011111111")
-        with self.assertRaisesRegex(JTAGProbeError,
-                r"^TAP #0 has invalid DR IDCODE=000000ff$"):
-            self.iface.interrogate_dr(dr)
-        self.assertEqual(self.iface.interrogate_dr(dr, check=False), None)
-
-    def test_ir_1tap_0start(self):
-        ir = bits("0100")
-        with self.assertRaisesRegex(JTAGProbeError,
-                r"^IR capture does not start with <10> transition$"):
-            self.iface.interrogate_ir(ir, 1)
-        self.assertEqual(self.iface.interrogate_ir(ir, 1, check=False),
-                         None)
-
-    def test_ir_1tap_0start_1length(self):
-        ir = bits("0100")
-        with self.assertRaisesRegex(JTAGProbeError,
-                r"^IR capture does not start with <10> transition$"):
-            self.iface.interrogate_ir(ir, 1, ir_lengths=[4])
-        self.assertEqual(self.iface.interrogate_ir(ir, 1, ir_lengths=[4], check=False),
-                         None)
-
-    def test_ir_1tap_1start(self):
-        ir = bits("0001")
-        self.assertEqual(self.iface.interrogate_ir(ir, 1),
-                         [4])
-
-    def test_ir_1tap_2start(self):
-        ir = bits("0101")
-        self.assertEqual(self.iface.interrogate_ir(ir, 1),
-                         [4])
-
-    def test_ir_1tap_2start_1length(self):
-        ir = bits("0101")
-        self.assertEqual(self.iface.interrogate_ir(ir, 1, ir_lengths=[4]),
-                         [4])
-
-    def test_ir_1tap_2start_1length_over(self):
-        ir = bits("0101")
-        with self.assertRaisesRegex(JTAGProbeError,
-                r"^IR capture length differs from sum of IR lengths$"):
-            self.iface.interrogate_ir(ir, 1, ir_lengths=[5])
-        self.assertEqual(self.iface.interrogate_ir(ir, 1, ir_lengths=[5], check=False),
-                         None)
-
-    def test_ir_2tap_1start(self):
-        ir = bits("0001")
-        with self.assertRaisesRegex(JTAGProbeError,
-                r"^IR capture has fewer <10> transitions than TAPs$"):
-            self.iface.interrogate_ir(ir, 2)
-        self.assertEqual(self.iface.interrogate_ir(ir, 2, check=False),
-                         None)
-
-    def test_ir_2tap_1start_2length(self):
-        ir = bits("0001")
-        with self.assertRaisesRegex(JTAGProbeError,
-                r"^IR capture has fewer <10> transitions than TAPs$"):
-            self.iface.interrogate_ir(ir, 2, ir_lengths=[2, 2])
-        self.assertEqual(self.iface.interrogate_ir(ir, 2, ir_lengths=[2, 2], check=False),
-                         None)
-
-    def test_ir_2tap_2start(self):
-        ir = bits("01001")
-        self.assertEqual(self.iface.interrogate_ir(ir, 2),
-                         [3, 2])
-
-    def test_ir_2tap_3start(self):
-        ir = bits("01001001")
-        with self.assertRaisesRegex(JTAGProbeError,
-                r"^IR capture insufficiently constrains IR lengths$"):
-            self.iface.interrogate_ir(ir, 2)
-        self.assertEqual(self.iface.interrogate_ir(ir, 2, check=False),
-                         None)
-
-    def test_ir_2tap_3start_1length(self):
-        ir = bits("01001001")
-        with self.assertRaisesRegex(JTAGProbeError,
-                r"^IR length count differs from TAP count$"):
-            self.iface.interrogate_ir(ir, 3, ir_lengths=[1])
-        self.assertEqual(self.iface.interrogate_ir(ir, 3, ir_lengths=[1], check=False),
-                         None)
-
-    def test_ir_2tap_3start_2length(self):
-        ir = bits("01001001")
-        self.assertEqual(self.iface.interrogate_ir(ir, 2, ir_lengths=[6, 2]),
-                         [6, 2])
-        self.assertEqual(self.iface.interrogate_ir(ir, 2, ir_lengths=[3, 5]),
-                         [3, 5])
-
-
-class JTAGProbeAppletTestCase(GlasgowAppletTestCase, applet=JTAGProbeApplet):
-    @synthesis_test
-    def test_build(self):
-        self.assertBuilds()
+    @classmethod
+    def tests(cls):
+        from . import test
+        return test.JTAGProbeAppletTestCase

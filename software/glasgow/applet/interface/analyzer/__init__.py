@@ -100,7 +100,7 @@ class AnalyzerApplet(GlasgowApplet):
         vcd_writer = VCDWriter(args.file, timescale="1 ns", check_values=False)
         signals = []
         for index in range(self._event_sources[0].width):
-            signals.append(vcd_writer.register_var(scope="", name="pin[{}]".format(index),
+            signals.append(vcd_writer.register_var(scope="", name=f"pin[{index}]",
                 var_type="wire", size=1, init=0))
 
         try:
@@ -125,9 +125,7 @@ class AnalyzerApplet(GlasgowApplet):
         finally:
             vcd_writer.close(timestamp)
 
-# -------------------------------------------------------------------------------------------------
-
-class AnalyzerAppletTestCase(GlasgowAppletTestCase, applet=AnalyzerApplet):
-    @synthesis_test
-    def test_build(self):
-        self.assertBuilds()
+    @classmethod
+    def tests(cls):
+        from . import test
+        return test.AnalyzerAppletTestCase

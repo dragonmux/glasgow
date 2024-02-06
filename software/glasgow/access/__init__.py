@@ -2,6 +2,7 @@ from abc import ABCMeta, abstractmethod
 from amaranth import *
 from amaranth.lib.io import Pin
 from typing import Optional
+import argparse
 
 from ..gateware.pads import Pads
 from ..target.analyzer import GlasgowAnalyzer
@@ -14,9 +15,8 @@ __all__ += ["AccessDemultiplexer", "AccessDemultiplexerInterface"]
 
 
 class AccessArguments(metaclass=ABCMeta):
-    def _arg_error(self, message, *args, **kwargs):
-        raise argparse.ArgumentTypeError(("applet {!r}: " + message)
-                                         .format(self._applet_name, *args, **kwargs))
+    def _arg_error(self, message):
+        raise argparse.ArgumentTypeError(f"applet {self._applet_name!r}: " + message)
 
     @abstractmethod
     def add_build_arguments(self, parser):
@@ -98,7 +98,7 @@ class AccessMultiplexerInterface(Elaboratable, metaclass=ABCMeta):
         pad_args = {}
 
         for pin in pins:
-            pin_num = getattr(args, "pin_{}".format(pin))
+            pin_num = getattr(args, f"pin_{pin}")
             if pin_num is None:
                 self.logger.debug("not assigning pin %r to any device pin", pin)
             else:
@@ -107,7 +107,7 @@ class AccessMultiplexerInterface(Elaboratable, metaclass=ABCMeta):
                 pad_args[pin] = self.get_pin(pin_num, name=pin)
 
         for pin_set in pin_sets:
-            pin_nums = getattr(args, "pin_set_{}".format(pin_set))
+            pin_nums = getattr(args, f"pin_set_{pin_set}")
             if pin_nums is None:
                 self.logger.debug("not assigning pin set %r to any device pins", pin_set)
             else:

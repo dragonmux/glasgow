@@ -2,10 +2,10 @@
 # Accession: G00029
 
 import re
-from bitarray import bitarray
+from glasgow.support.bits import bits, bitarray
 
 
-__all__ = ["JESD3Parser", "JESD3ParsingError"]
+__all__ = ["JESD3Parser", "JESD3ParsingError", "JESD3Emitter"]
 
 
 class JESD3ParsingError(Exception):
@@ -77,9 +77,9 @@ class JESD3Lexer:
 
         Both the line and the column start at 1.
         """
-        line = len(re.compile(r"\n").findall(self.buffer, endpos=self.position))
+        line = len(re.compile(rb"\n").findall(self.buffer, endpos=self.position))
         if line > 1:
-            column = self.position - self.buffer.rindex("\n", 0, self.position)
+            column = self.position - self.buffer.rindex(b"\n", 0, self.position)
         else:
             column = self.position
         return line + 1, column + 1
@@ -167,7 +167,7 @@ class JESD3Parser:
         """Fuse count"""
         if self.fuse is not None:
             self._parse_error("fuse count specified more than once")
-        self.fuse = bitarray(int(count, 10), endian="little")
+        self.fuse = bitarray(0, int(count, 10))
 
     def _on_QP(self, count):
         """Pin count (unsupported and ignored)"""
@@ -193,7 +193,7 @@ class JESD3Parser:
         if self.fuse is None:
             self._parse_error("fuse list specified before fuse count")
         index  = int(index, 10)
-        values = bitarray(re.sub(r"[ \r\n]", "", values.decode("ascii")), endian="little")
+        values = bits(values[::-1].decode("ascii"))
         if index + len(values) > len(self.fuse):
             self._parse_error("fuse list specifies range [%d:%d] beyond last fuse %d"
                               % (index, index + len(values), len(self.fuse)))
@@ -203,7 +203,7 @@ class JESD3Parser:
     def _on_C(self, checksum):
         """Fuse checksum"""
         expected_checksum = int(checksum, 16)
-        actual_checksum   = sum(self.fuse.tobytes()) & 0xffff
+        actual_checksum   = sum(self.fuse.to_bytes()) & 0xffff
         if expected_checksum != actual_checksum:
             self._parse_error("fuse checksum mismatch: expected %04X, actual %04X"
                               % (expected_checksum, actual_checksum))
@@ -292,10 +292,44 @@ class JESD3Parser:
                               % (self._fuse_bit_count, len(self.fuse)))
 
 
+class JESD3Emitter:
+    def __init__(self, fuses, *, quirk_no_design_spec=False):
+        if not isinstance(fuses, (bits, bitarray)):
+            raise TypeError("JESD3Emitter needs a bits or bitarray instance")
+        self.fuses = fuses
+        self.quirk_no_design_spec = quirk_no_design_spec
+        self.comments = []
+
+    def add_comment(self, comment):
+        self.comments.append(comment)
+
+    def emit(self):
+        buffer = bytearray()
+        if self.quirk_no_design_spec:
+            buffer += b"\x02"
+        else:
+            buffer += b"\x02*\n"
+        buffer += b"QF%d*\n" % len(self.fuses)
+        buffer += b"F0*\n"
+        for comment in self.comments:
+            buffer += b"N " + comment + b"*\n"
+        for pos in range(0, len(self.fuses), 64):
+            chunk = self.fuses[pos:pos+64]
+            buffer += b"L%07d " % pos
+            for bit in chunk:
+                buffer += b"%d" % bit
+            buffer += b"*\n"
+        buffer += b"C%04X*\n" % (sum(self.fuses.to_bytes()) & 0xffff)
+        buffer += b"\x03"
+        checksum = sum(buffer) & 0xffff
+        buffer += b"%04X" % checksum
+        return bytes(buffer)
+
+
 if __name__ == "__main__":
     import sys
     with open(sys.argv[1], "rb") as f:
         parser = JESD3Parser(f.read(), quirk_no_design_spec=False)
         parser.parse()
         for i in range(0, len(parser.fuse) + 63, 64):
-            print("%08x: %s" % (i, parser.fuse[i:i + 64].to01()))
+            print(f"{i:08x}: {parser.fuse[i:i + 64]}")

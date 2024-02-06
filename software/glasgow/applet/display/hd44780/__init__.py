@@ -279,9 +279,7 @@ class DisplayHD44780Applet(GlasgowApplet):
             await data(datetime.now().strftime("%y-%m-%d").encode("ascii"))
             await iface.flush()
 
-# -------------------------------------------------------------------------------------------------
-
-class DisplayHD44780AppletTestCase(GlasgowAppletTestCase, applet=DisplayHD44780Applet):
-    @synthesis_test
-    def test_build(self):
-        self.assertBuilds()
+    @classmethod
+    def tests(cls):
+        from . import test
+        return test.DisplayHD44780AppletTestCase

@@ -56,17 +56,35 @@ class _PollerThread(threading.Thread):
         self.context = context
 
     def run(self):
+        # The poller thread spends most of its life in blocking `handleEvents()` calls and this can
+        # cause issues during interpreter shutdown. If it were a daemon thread (it isn't) then it
+        # would be instantly killed on interpreter shutdown and any locks it took could block some
+        # libusb1 objects being destroyed as their Python counterparts are garbage collected. Since
+        # it is not a daemon thread, `threading._shutdown()` (that is called by e.g. `exit()`) will
+        # join it, and so it must terminate during threading shutdown. Note that `atexit.register`
+        # is not enough as those callbacks are called after threading shutdown, and past the point
+        # where a deadlock would happen.
+        threading._register_atexit(self.stop)
         while not self.done:
             self.context.handleEvents()
+
+    def stop(self):
+        self.done = True
+        self.context.interruptEventHandler()
+        self.join()
 
 
 class GlasgowHardwareDevice:
     demultiplexer : AccessDemultiplexer
 
-    @staticmethod
-    def firmware():
-        with importlib.resources.files(__package__).joinpath("firmware.ihex").open("r") as f:
-            return input_data(f, fmt="ihex")
+    @classmethod
+    def firmware_file(cls):
+        return importlib.resources.files(__package__).joinpath("firmware.ihex")
+
+    @classmethod
+    def firmware_data(cls):
+        with cls.firmware_file().open() as file:
+            return input_data(file, fmt="ihex")
 
     @classmethod
     def _enumerate_devices(cls, usb_context: usb1.USBContext):
@@ -135,9 +153,10 @@ class GlasgowHardwareDevice:
 
             # If the device has no firmware or the firmware is too old (or, potentially, too new),
             # load the firmware that we know will work.
-            logger.debug("loading firmware to rev%s device", revision)
+            logger.debug("loading firmware from %r to rev%s device",
+                         str(cls.firmware_file()), revision)
             handle.controlWrite(usb1.REQUEST_TYPE_VENDOR, REQ_RAM, REG_CPUCS, 0, [1])
-            for address, data in cls.firmware():
+            for address, data in cls.firmware_data():
                 while len(data) > 0:
                     handle.controlWrite(usb1.REQUEST_TYPE_VENDOR, REQ_RAM,
                                         address, 0, data[:4096])
@@ -206,10 +225,29 @@ class GlasgowHardwareDevice:
             self.usb_handle.setAutoDetachKernelDriver(True)
         except usb1.USBErrorNotSupported:
             pass
+        device_serial = self.usb_handle.getASCIIStringDescriptor(
+            usb_device.getSerialNumberDescriptor())
+        device_product = self.usb_handle.getASCIIStringDescriptor(
+            usb_device.getProductDescriptor())
+        self._serial = device_serial
+        self._modified_design = not device_product.startswith("Glasgow Interface Explorer")
+        if self._modified_design:
+            logger.info("device with serial number %s was manufactured from modified design files",
+                        self._serial)
+            logger.info("the Glasgow Interface Explorer project is not responsible for "
+                        "operation of this device")
+
+    @property
+    def serial(self):
+        return self._serial
+
+    @property
+    def modified_design(self):
+        return self._modified_design
 
     def close(self):
-        self.usb_poller.done = True
         self.usb_handle.close()
+        self.usb_poller.stop()
         self.usb_context.close()
 
     async def _do_transfer(self, is_read, setup):
@@ -253,23 +291,29 @@ class GlasgowHardwareDevice:
             elif status == usb1.TRANSFER_STALL:
                 result_future.set_exception(usb1.USBErrorPipe())
             elif status == usb1.TRANSFER_NO_DEVICE:
-                result_future.set_exception(GlasgowDeviceError("device lost"))
+                result_future.set_exception(GlasgowDeviceError("device disconnected"))
             else:
                 result_future.set_exception(GlasgowDeviceError(
-                    "transfer error: {}".format(usb1.libusb1.libusb_transfer_status(status))))
+                    f"transfer error: {usb1.libusb1.libusb_transfer_status(status)}"))
+
+        def handle_usb_error(func):
+            try:
+                func()
+            except usb1.USBErrorNoDevice:
+                raise GlasgowDeviceError("device disconnected") from None
 
         loop = asyncio.get_event_loop()
         transfer.setCallback(lambda transfer: loop.call_soon_threadsafe(usb_callback, transfer))
-        transfer.submit()
+        handle_usb_error(lambda: transfer.submit())
         try:
             return await result_future
-        except asyncio.CancelledError:
-            try:
-                transfer.cancel()
-                await cancel_future
-            except usb1.USBErrorNotFound:
-                pass # already finished, one way or another
-            raise
+        finally:
+            if result_future.cancelled():
+                try:
+                    handle_usb_error(lambda: transfer.cancel())
+                    await cancel_future
+                except usb1.USBErrorNotFound:
+                    pass # already finished, one way or another
 
     async def control_read(self, request_type, request, value, index, length):
         logger.trace("USB: CONTROL IN type=%#04x request=%#04x "
@@ -342,7 +386,7 @@ class GlasgowHardwareDevice:
         elif kind == "ice":
             base_offset = 1
         else:
-            raise ValueError("Unknown EEPROM kind {}".format(kind))
+            raise ValueError(f"Unknown EEPROM kind {kind}")
         return 0x10000 * base_offset + addr
 
     async def read_eeprom(self, kind, addr, length):
@@ -464,7 +508,7 @@ class GlasgowHardwareDevice:
             elif port == "B":
                 mask |= IO_BUF_B
             else:
-                raise GlasgowDeviceError("unknown I/O port {}".format(port))
+                raise GlasgowDeviceError(f"unknown I/O port {port}")
         return mask
 
     @staticmethod
@@ -514,19 +558,19 @@ class GlasgowHardwareDevice:
         try:
             return await self._read_voltage(REQ_IO_VOLT, spec)
         except usb1.USBErrorPipe:
-            raise GlasgowDeviceError("cannot get I/O port {} I/O voltage".format(spec))
+            raise GlasgowDeviceError(f"cannot get I/O port {spec} I/O voltage")
 
     async def get_voltage_limit(self, spec):
         try:
             return await self._read_voltage(REQ_LIMIT_VOLT, spec)
         except usb1.USBErrorPipe:
-            raise GlasgowDeviceError("cannot get I/O port {} I/O voltage limit".format(spec))
+            raise GlasgowDeviceError(f"cannot get I/O port {spec} I/O voltage limit")
 
     async def measure_voltage(self, spec):
         try:
             return await self._read_voltage(REQ_SENSE_VOLT, spec)
         except usb1.USBErrorPipe:
-            raise GlasgowDeviceError("cannot measure I/O port {} sense voltage".format(spec))
+            raise GlasgowDeviceError(f"cannot measure I/O port {spec} sense voltage")
 
     async def set_alert(self, spec, low_volts, high_volts):
         low_millivolts  = round(low_volts * 1000)
@@ -568,7 +612,7 @@ class GlasgowHardwareDevice:
             high_volts = round(high_millivolts / 1000, 2)
             return low_volts, high_volts
         except usb1.USBErrorPipe:
-            raise GlasgowDeviceError("cannot get I/O port {} voltage alert".format(spec))
+            raise GlasgowDeviceError(f"cannot get I/O port {spec} voltage alert")
 
     async def poll_alert(self):
         try:
@@ -608,7 +652,7 @@ class GlasgowHardwareDevice:
 
     async def _register_error(self, addr):
         if await self._status() & ST_FPGA_RDY:
-            raise GlasgowDeviceError("register 0x{:02x} does not exist".format(addr))
+            raise GlasgowDeviceError(f"register 0x{addr:02x} does not exist")
         else:
             raise GlasgowDeviceError("FPGA is not configured")
 

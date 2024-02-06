@@ -204,7 +204,7 @@ class SensorHX711Applet(GlasgowApplet):
 
         if args.operation == "measure":
             sample = await hx711.sample()
-            print("count : {:+d} LSB".format(sample))
+            print(f"count : {sample:+d} LSB")
 
         if args.operation == "log":
             data_logger = await DataLogger(self.logger, args, field_names={"n": "count(LSB)"})
@@ -212,9 +212,7 @@ class SensorHX711Applet(GlasgowApplet):
                 sample = await hx711.sample()
                 await data_logger.report_data(fields={"n": sample})
 
-# -------------------------------------------------------------------------------------------------
-
-class SensorHX711AppletTestCase(GlasgowAppletTestCase, applet=SensorHX711Applet):
-    @synthesis_test
-    def test_build(self):
-        self.assertBuilds()
+    @classmethod
+    def tests(cls):
+        from . import test
+        return test.SensorHX711AppletTestCase

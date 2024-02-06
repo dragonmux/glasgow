@@ -1,13 +1,18 @@
 import re
+import os
 import sys
+import traceback
 import importlib.metadata
 import packaging.requirements
 import pathlib
 import sysconfig
-import textwrap
+import logging
 
 
-__all__ = ["PluginRequirementsUnmet", "PluginMetadata"]
+__all__ = ["PluginRequirementsUnmet", "PluginLoadError", "PluginMetadata"]
+
+
+logger = logging.getLogger(__loader__.name)
 
 
 # TODO(py3.10): remove
@@ -69,12 +74,13 @@ def _unmet_requirements_in(requirements):
 
 
 def _install_command_for_requirements(requirements):
+    requirement_args = " ".join(f"'{r}'" for r in requirements)
     if (pathlib.Path(sysconfig.get_path("data")) / "pipx_metadata.json").exists():
-        return f"pipx inject glasgow {' '.join(str(r) for r in requirements)}"
+        return f"pipx inject glasgow {requirement_args}"
     if (pathlib.Path(sysconfig.get_path("data")) / "pyvenv.cfg").exists():
-        return f"pip install {' '.join(str(r) for r in requirements)}"
+        return f"pip install {requirement_args}"
     else:
-        return f"pip install --user {' '.join(str(r) for r in requirements)}"
+        return f"pip install --user {requirement_args}"
 
 
 class PluginRequirementsUnmet(Exception):
@@ -82,8 +88,17 @@ class PluginRequirementsUnmet(Exception):
         self.metadata = metadata
 
     def __str__(self):
-        return (f"plugin {self.metadata.handle} has unmet requirements: "
-                f"{', '.join(str(r) for r in self.metadata.unmet_requirements)}")
+        return (f"{self.metadata.GROUP_NAME} plugin {self.metadata.handle!r} has unmet "
+                f"requirements: {', '.join(str(r) for r in self.metadata.unmet_requirements)}")
+
+
+class PluginLoadError(Exception):
+    def __init__(self, metadata):
+        self.metadata = metadata
+
+    def __str__(self):
+        return (f"{self.metadata.GROUP_NAME} plugin {self.metadata.handle!r} raised an exception "
+                f"while being loaded")
 
 
 class PluginMetadata:
@@ -93,6 +108,21 @@ class PluginMetadata:
     # `[project.entry-points."glasgow.applet"]`.
     GROUP_NAME = None
 
+    _out_of_tree_warning_printed_for = set()
+
+    @classmethod
+    def _loadable(cls, entry_point):
+        dist_name = entry_point.dist.name
+        if dist_name == "glasgow":
+            return True # in-tree
+        if os.getenv("GLASGOW_OUT_OF_TREE_APPLETS") == "I-am-okay-with-breaking-changes":
+            if dist_name not in cls._out_of_tree_warning_printed_for:
+                logger.warn(f"loading out-of-tree plugin {dist_name!r}; plugin API is currently "
+                            f"unstable and subject to change without warning")
+                cls._out_of_tree_warning_printed_for.add(dist_name)
+            return True
+        return False
+
     @classmethod
     def get(cls, handle):
         entry_point, *_ = _entry_points(group=cls.GROUP_NAME, name=handle)
@@ -100,11 +130,10 @@ class PluginMetadata:
 
     @classmethod
     def all(cls):
-        return {ep.name: cls(ep) for ep in _entry_points(group=cls.GROUP_NAME)}
+        return {ep.name: cls(ep) for ep in _entry_points(group=cls.GROUP_NAME) if cls._loadable(ep)}
 
     def __init__(self, entry_point):
-        if entry_point.dist.name != "glasgow":
-            raise Exception("Out-of-tree plugins are not supported yet")
+        assert self._loadable(entry_point)
 
         # Python-side metadata (how to load it, etc.)
         self.module = entry_point.module
@@ -115,19 +144,32 @@ class PluginMetadata:
 
         # Person-side metadata (how to display it, etc.)
         self.handle = entry_point.name
-        if self.available:
-            self._cls = entry_point.load()
-            self.synopsis = self._cls.help
-            self.description = self._cls.description
+        if not self.unmet_requirements:
+            try:
+                self._cls = entry_point.load()
+                self.synopsis = self._cls.help
+                self.description = self._cls.description
+            except Exception as exn:
+                self._cls = None
+                # traceback.format_exception_only can return multiple lines
+                self.synopsis = (
+                    f"/!\\ unavailable due to a load error: "
+                    "".join(traceback.format_exception_only(exn)).splitlines()[0])
+                # traceback.format_exception can return lines with internal newlines
+                self.description = (
+                    f"\nThis plugin is unavailable because attempting to load it has raised "
+                    f"an exception. The exception is:\n\n    " +
+                    "".join(traceback.format_exception(exn)).replace("\n", "\n    "))
         else:
-            self.synopsis = (f"/!\\ unavailable due to unmet requirements: "
-                             f"{', '.join(str(r) for r in self.unmet_requirements)}")
-            self.description = textwrap.dedent(f"""
-            This plugin is unavailable because it requires additional packages that are
-            not installed. To install them, run:
-
-                {_install_command_for_requirements(self.unmet_requirements)}
-            """)
+            self._cls = None
+            self.synopsis = (
+                f"/!\\ unavailable due to unmet requirements: "
+                f"{', '.join(str(r) for r in self.unmet_requirements)}")
+            self.description = (
+                f"\nThis plugin is unavailable because it requires additional packages to function "
+                f"that are not installed. To install them, run:\n\n    " +
+                _install_command_for_requirements(self.unmet_requirements) +
+                f"\n")
 
     @property
     def unmet_requirements(self):
@@ -137,9 +179,15 @@ class PluginMetadata:
     def available(self):
         return not self.unmet_requirements
 
+    @property
+    def loadable(self):
+        return self._cls is not None
+
     def load(self):
-        if not self.available:
+        if self.unmet_requirements:
             raise PluginRequirementsUnmet(self)
+        if self._cls is None:
+            raise PluginLoadError(self)
         return self._cls
 
     def __repr__(self):

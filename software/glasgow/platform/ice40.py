@@ -1,6 +1,6 @@
 import asyncio
 from amaranth import *
-from amaranth.vendor.lattice_ice40 import *
+from amaranth.vendor import LatticeICE40Platform
 
 from ..device.hardware import *
 from ..gateware import GatewareBuildError
@@ -18,7 +18,7 @@ class GlasgowPlatformICE40(LatticeICE40Platform):
         return file_templates
 
     def toolchain_program(self, products, name):
-        bitstream = products.get("{}.bin".format(name))
+        bitstream = products.get(f"{name}.bin")
         async def do_program():
             device = GlasgowHardwareDevice()
             await device.download_bitstream(bitstream)

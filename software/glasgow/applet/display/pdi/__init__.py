@@ -61,7 +61,7 @@ import itertools
 import logging
 import argparse
 import asyncio
-from bitarray import bitarray
+from glasgow.support.bits import bitarray
 from amaranth import *
 
 from ...interface.spi_controller import SPIControllerSubtarget, SPIControllerInterface
@@ -230,7 +230,7 @@ class PDIG1DisplayInterface(PDIDisplayInterface):
         # Verify that COG has the right generation
         cog_id = await self._identify()
         if cog_id != 0x11:
-            raise PDIDisplayError("COG is not PDI EPD G1 (id={:#04x})".format(cog_id))
+            raise PDIDisplayError(f"COG is not PDI EPD G1 (id={cog_id:#04x})")
 
         self._log("power on cog driver")
         # Channel Select
@@ -464,8 +464,7 @@ class DisplayPDIApplet(GlasgowApplet):
             image_width, image_height = int(image_size[1]), int(image_size[2])
             if image_width != pdi_iface.width or image_height != pdi_iface.height:
                 raise GlasgowAppletError("image size does not match display size")
-            image = bitarray()
-            image.frombytes(args.image_file.read())
+            image = bitarray(args.image_file.read())
 
         stage_ms = 300
 
@@ -477,9 +476,7 @@ class DisplayPDIApplet(GlasgowApplet):
         await pdi_iface.display_frame(mode="white", time_ms=stage_ms, image=image)
         await pdi_iface.power_off()
 
-# -------------------------------------------------------------------------------------------------
-
-class DisplayPDIAppletTestCase(GlasgowAppletTestCase, applet=DisplayPDIApplet):
-    @synthesis_test
-    def test_build(self):
-        self.assertBuilds()
+    @classmethod
+    def tests(cls):
+        from . import test
+        return test.DisplayPDIAppletTestCase

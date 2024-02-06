@@ -210,9 +210,7 @@ class VideoWS2812OutputApplet(GlasgowApplet):
             except asyncio.CancelledError:
                 pass
 
-# -------------------------------------------------------------------------------------------------
-
-class VideoWS2812OutputAppletTestCase(GlasgowAppletTestCase, applet=VideoWS2812OutputApplet):
-    @synthesis_test
-    def test_build(self):
-        self.assertBuilds(args=["--pins-out", "0:3", "-c", "1024"])
+    @classmethod
+    def tests(cls):
+        from . import test
+        return test.VideoWS2812OutputAppletTestCase

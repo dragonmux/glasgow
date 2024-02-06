@@ -136,11 +136,15 @@ class UARTApplet(GlasgowApplet):
     description = """
     Transmit and receive data via UART.
 
-    Any baud rate is supported. Only 8n1 mode is supported.
+    Any baud rate is supported. Only 8 start bits and 1 stop bits are supported, with configurable
+    parity.
 
-    NOTE: The automatic baud rate algorithm requires a burst of data, and will lock on to the
-    shortest bit-times present in the stream... updates only occur on frame or parity errors, and
-    and random data will help.
+    The automatic baud rate determination algorithm works by locking onto the shortest bit time in
+    the receive stream. It will determine the baud rate incorrectly in presence of glitches as well
+    as insufficiently diverse data (e.g. when receiving data consisting only of the letter "a",
+    the baud rate that is determined will be one half of the actual baud rate). To reduce spurious
+    baud rate changes, the algorithm is only consulted when frame or (if enabled) parity errors
+    are present in received data.
     """
 
     __pins = ("rx", "tx")
@@ -387,22 +391,7 @@ class UARTApplet(GlasgowApplet):
         if args.operation == "socket":
             await self._interact_socket(uart, args.endpoint)
 
-# -------------------------------------------------------------------------------------------------
-
-class UARTAppletTestCase(GlasgowAppletTestCase, applet=UARTApplet):
-    @synthesis_test
-    def test_build(self):
-        self.assertBuilds()
-
-    def setup_loopback(self):
-        self.build_simulated_applet()
-        mux_iface = self.applet.mux_interface
-        m = Module()
-        m.d.comb += mux_iface.pads.rx_t.i.eq(mux_iface.pads.tx_t.o)
-        self.target.add_submodule(m)
-
-    @applet_simulation_test("setup_loopback", ["--baud", "5000000"])
-    async def test_loopback(self):
-        uart_iface = await self.run_simulated_applet()
-        await uart_iface.write(bytes([0xAA, 0x55]))
-        self.assertEqual(await uart_iface.read(2), bytes([0xAA, 0x55]))
+    @classmethod
+    def tests(cls):
+        from . import test
+        return test.UARTAppletTestCase

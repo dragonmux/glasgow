@@ -234,9 +234,7 @@ class AudioDACApplet(GlasgowApplet):
                 await pcm_iface.write(data)
                 await pcm_iface.flush(wait=False)
 
-# -------------------------------------------------------------------------------------------------
-
-class AudioDACAppletTestCase(GlasgowAppletTestCase, applet=AudioDACApplet):
-    @synthesis_test
-    def test_build(self):
-        self.assertBuilds(args=["--unsigned"])
+    @classmethod
+    def tests(cls):
+        from . import test
+        return test.AudioDACAppletTestCase

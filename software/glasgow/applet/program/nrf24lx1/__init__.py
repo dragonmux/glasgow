@@ -116,11 +116,11 @@ class ProgramNRF24Lx1Interface:
 
     async def read_status(self):
         status, = await self._command(0x05, ret=1)
-        self._log("read status=%s", "{:#010b}".format(status))
+        self._log("read status=%s", f"{status:#010b}")
         return status
 
     async def write_status(self, status):
-        self._log("write status=%s", "{:#010b}".format(status))
+        self._log("write status=%s", f"{status:#010b}")
         await self._command(0x01, arg=[status])
 
     async def wait_status(self):
@@ -421,9 +421,7 @@ class ProgramNRF24Lx1Applet(GlasgowApplet):
         finally:
             await nrf24lx1_iface.reset_application()
 
-# -------------------------------------------------------------------------------------------------
-
-class ProgramNRF24Lx1AppletTestCase(GlasgowAppletTestCase, applet=ProgramNRF24Lx1Applet):
-    @synthesis_test
-    def test_build(self):
-        self.assertBuilds()
+    @classmethod
+    def tests(cls):
+        from . import test
+        return test.ProgramNRF24Lx1AppletTestCase
