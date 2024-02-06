@@ -1,9 +1,9 @@
 __all__ = ('to_int8', 'to_in32_be', 'decode_device_id_code')
 
-def to_int8(bytes):
+def to_int8(bytes : bytes):
 	return bytes[0]
 
-def to_int32_be(bytes):
+def to_int32_be(bytes : bytes):
 	return (
 		(bytes[0] << 24) |
 		(bytes[1] << 16) |
@@ -22,7 +22,7 @@ avr_idcode = {
 	0x9842: 'ATXMega256A3U',
 }
 
-def decode_device_id_code(bytes):
+def decode_device_id_code(bytes : bytes):
 	idCode = to_int32_be(bytes)
 	version = (idCode >> 28) & 0xF
 	part = (idCode >> 12) & 0xFFFF

@@ -12,6 +12,7 @@ from fx2.format import input_data
 from ..support.logging import *
 from . import GlasgowDeviceError
 from .config import GlasgowConfig
+from ..access import AccessDemultiplexer
 
 
 __all__ = ["GlasgowHardwareDevice"]
@@ -59,6 +60,8 @@ class _PollerThread(threading.Thread):
 
 
 class GlasgowHardwareDevice:
+    demultiplexer : AccessDemultiplexer
+
     @staticmethod
     def firmware():
         with importlib.resources.files(__package__).joinpath("firmware.ihex").open("r") as f:

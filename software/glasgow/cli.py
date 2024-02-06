@@ -11,6 +11,7 @@ import unittest
 import importlib.metadata
 from vcd import VCDWriter
 from datetime import datetime
+from typing import Tuple
 try:
     from ast import PyCF_ALLOW_TOP_LEVEL_AWAIT # Python 3.8+
 except ImportError:
@@ -385,11 +386,11 @@ def get_argparser():
 
 
 # The name of this function appears in Verilog output, so keep it tidy.
-def _applet(revision, args):
+def _applet(revision, args: argparse.Namespace) -> Tuple[GlasgowHardwareTarget, GlasgowApplet]:
     target = GlasgowHardwareTarget(revision=revision,
                                    multiplexer_cls=DirectMultiplexer,
                                    with_analyzer=hasattr(args, "trace") and args.trace)
-    applet = GlasgowAppletMetadata.get(args.applet).applet_cls()
+    applet: GlasgowApplet = GlasgowAppletMetadata.get(args.applet).applet_cls()
     try:
         message = ("applet requires device rev{}+, rev{} found"
                    .format(applet.required_revision, revision))

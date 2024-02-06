@@ -38,7 +38,7 @@ class AccessMultiplexer(Elaboratable, metaclass=ABCMeta):
         pass
 
     @abstractmethod
-    def claim_interface(self, applet, args, with_analyzer=True):
+    def claim_interface(self, applet, args, with_analyzer=True) -> 'AccessMultiplexerInterface':
         pass
 
 
@@ -114,7 +114,7 @@ class AccessDemultiplexer(metaclass=ABCMeta):
         self._interfaces = []
 
     @abstractmethod
-    async def claim_interface(self, applet, mux_interface, args, timeout=None):
+    async def claim_interface(self, applet, mux_interface, args, timeout=None) -> 'AccessDemultiplexerInterface':
         pass
 
     async def flush(self):

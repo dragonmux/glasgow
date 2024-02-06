@@ -5,6 +5,9 @@ from enum import IntEnum
 from amaranth import *
 
 from ... import *
+from ....device.hardware import GlasgowHardwareDevice
+from ....target.hardware import GlasgowHardwareTarget
+from ....access import AccessDemultiplexerInterface
 
 class TAPInstruction(IntEnum):
 	idCode = 0x3
@@ -26,7 +29,7 @@ class Header(IntEnum):
 	Error = 0x1F
 
 class JTAGPDIInterface:
-	def __init__(self, interface):
+	def __init__(self, interface : AccessDemultiplexerInterface):
 		self.lower = interface
 
 	async def read(self):
@@ -84,7 +87,7 @@ class JTAGPDIApplet(GlasgowApplet):
 			"--interactive", default = False, action = "store_true",
 			help = "run an interactive PDI prompt")
 
-	def build(self, target, args):
+	def build(self, target : GlasgowHardwareTarget, args : argparse.Namespace):
 		self.mux_interface = iface = target.multiplexer.claim_interface(self, args)
 		if args.raw_file or args.pdi_file:
 			from .sniffer import JTAGPDISnifferSubtarget
@@ -101,7 +104,7 @@ class JTAGPDIApplet(GlasgowApplet):
 				period_cyc = target.sys_clk_freq // (args.frequency * 1000),
 			))
 
-	async def run(self, device, args):
+	async def run(self, device : GlasgowHardwareDevice, args : argparse.Namespace):
 		iface = await device.demultiplexer.claim_interface(self, self.mux_interface, args)
 		return JTAGPDIInterface(iface)
 
@@ -463,7 +466,7 @@ class JTAGPDIApplet(GlasgowApplet):
 			return ([self._encode_opcode(PDIOpcodes.KEY)] + key, 0)
 		return 'Invalid opcode'
 
-	async def _interactive_prompt(self, iface):
+	async def _interactive_prompt(self, iface : AccessDemultiplexerInterface):
 		from sys import stdin
 		from . import meta
 
@@ -497,7 +500,7 @@ class JTAGPDIApplet(GlasgowApplet):
 			result = bytes(await iface.read(length = readCount))
 			self.logger.info(f'Recieved {result}')
 
-	async def interact(self, device, args, iface):
+	async def interact(self, device : GlasgowHardwareDevice, args : argparse.Namespace, iface : JTAGPDIInterface):
 		if args.raw_file:
 			await self._write_raw_vcd(args.raw_file, iface)
 		elif args.pdi_file:

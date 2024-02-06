@@ -6,6 +6,8 @@ from amaranth import *
 from ..support.arepl import *
 from ..support.plugin import *
 from ..gateware.clockgen import *
+from ..device.hardware import GlasgowHardwareDevice
+from ..target.hardware import GlasgowHardwareTarget
 
 
 __all__ = ["GlasgowAppletMetadata", "GlasgowAppletError", "GlasgowApplet", "GlasgowAppletTool"]
@@ -15,7 +17,7 @@ class GlasgowAppletMetadata(PluginMetadata):
     GROUP_NAME = "glasgow.applet"
 
     @property
-    def applet_cls(self):
+    def applet_cls(self) -> 'GlasgowApplet':
         return self.load()
 
     @property
@@ -47,18 +49,18 @@ class GlasgowApplet(metaclass=ABCMeta):
                 raise GlasgowAppletError("clock {}: {}".format(clock_name, e))
 
     @abstractmethod
-    def build(self, target):
+    def build(self, target: GlasgowHardwareTarget, args: argparse.Namespace):
         pass
 
     @classmethod
-    def add_run_arguments(cls, parser, access):
+    def add_run_arguments(cls, parser: argparse.ArgumentParser, access):
         access.add_run_arguments(parser)
 
     async def run_lower(self, cls, device, args, **kwargs):
         return await super(cls, self).run(device, args, **kwargs)
 
     @abstractmethod
-    async def run(self, device, args):
+    async def run(self, device: GlasgowHardwareDevice, args: argparse.Namespace):
         pass
 
     @classmethod
@@ -318,7 +320,7 @@ def applet_simulation_test(setup, args=[]):
             vcd_name = "{}.vcd".format(case.__name__)
             with sim.write_vcd(vcd_name):
                 sim.run()
-            os.remove(vcd_name)
+            #os.remove(vcd_name)
 
         return wrapper
 

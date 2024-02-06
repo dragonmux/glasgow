@@ -7,6 +7,7 @@ import logging
 import hashlib
 import appdirs
 import pathlib
+from typing import Optional
 from amaranth import *
 from amaranth.build import ResourceError
 
@@ -16,7 +17,7 @@ from ..gateware.fx2_crossbar import FX2Crossbar
 from ..platform.all import *
 from .analyzer import GlasgowAnalyzer
 from .toolchain import find_toolchain
-
+from ..access import AccessMultiplexer
 
 __all__ = ["GlasgowHardwareTarget"]
 
@@ -25,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 class GlasgowHardwareTarget(Elaboratable):
-    def __init__(self, revision, multiplexer_cls=None, with_analyzer=False):
+    def __init__(self, revision, multiplexer_cls: Optional[AccessMultiplexer]=None, with_analyzer=False):
         if revision in ("A0", "B0"):
             self.platform = GlasgowPlatformRevAB()
             self.sys_clk_freq = 30e6
@@ -59,7 +60,7 @@ class GlasgowHardwareTarget(Elaboratable):
 
         if multiplexer_cls:
             pipes = "PQ"
-            self.multiplexer = multiplexer_cls(ports=self.ports, pipes="PQ",
+            self.multiplexer: AccessMultiplexer = multiplexer_cls(ports=self.ports, pipes="PQ",
                 registers=self.registers, fx2_crossbar=self.fx2_crossbar)
         else:
             self.multiplexer = None
