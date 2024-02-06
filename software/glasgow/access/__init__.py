@@ -1,9 +1,11 @@
 from abc import ABCMeta, abstractmethod
 from amaranth import *
 from amaranth.lib.io import Pin
+from typing import Optional
 
 from ..gateware.pads import Pads
 from ..target.analyzer import GlasgowAnalyzer
+from ..device import GlasgowDevice
 
 
 __all__  = ["AccessArguments"]
@@ -44,8 +46,12 @@ class AccessMultiplexer(Elaboratable, metaclass=ABCMeta):
 
 
 class AccessMultiplexerInterface(Elaboratable, metaclass=ABCMeta):
+    _pipe_num: int
+    _addr_reset: int
+
     def __init__(self, applet, analyzer : GlasgowAnalyzer):
-        self.applet   = applet
+        from ..applet import GlasgowApplet
+        self.applet: GlasgowApplet   = applet
         self.logger   = applet.logger
         self.analyzer = analyzer
         self.pads     = None
@@ -60,6 +66,10 @@ class AccessMultiplexerInterface(Elaboratable, metaclass=ABCMeta):
 
     def get_inout_fifo(self, **kwargs):
         return (self.get_in_fifo(**kwargs), self.get_out_fifo(**kwargs))
+
+    @abstractmethod
+    def add_subtarget(self, subtarget : Elaboratable) -> Elaboratable:
+        pass
 
     @abstractmethod
     def build_pin_tristate(self, pin, oe, o, i):
@@ -132,9 +142,10 @@ class AccessDemultiplexer(metaclass=ABCMeta):
 
 
 class AccessDemultiplexerInterface(metaclass=ABCMeta):
-    def __init__(self, device, applet):
+    def __init__(self, device: GlasgowDevice, applet):
+        from ..applet import GlasgowApplet
         self.device = device
-        self.applet = applet
+        self.applet: GlasgowApplet = applet
         self.logger = applet.logger
 
     @abstractmethod
@@ -146,7 +157,7 @@ class AccessDemultiplexerInterface(metaclass=ABCMeta):
         pass
 
     @abstractmethod
-    async def read(self, length=None, *, flush=True):
+    async def read(self, length=None, *, flush=True) -> Optional[memoryview]:
         pass
 
     async def read_str(self, *args, encoding="utf-8", **kwargs):

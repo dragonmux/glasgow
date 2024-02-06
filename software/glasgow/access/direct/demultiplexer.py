@@ -5,7 +5,8 @@ import asyncio
 from ...support.logging import *
 from ...support.chunked_fifo import *
 from ...support.task_queue import *
-from .. import AccessDemultiplexer, AccessDemultiplexerInterface
+from .. import AccessDemultiplexer, AccessDemultiplexerInterface, AccessMultiplexerInterface
+from ...device.hardware import GlasgowHardwareDevice
 
 
 # On Linux, the total amount of in-flight USB requests for the entire system is limited
@@ -139,7 +140,7 @@ class DirectDemultiplexer(AccessDemultiplexer):
 
 
 class DirectDemultiplexerInterface(AccessDemultiplexerInterface):
-    def __init__(self, device, applet, mux_interface,
+    def __init__(self, device: GlasgowHardwareDevice, applet, mux_interface: AccessMultiplexerInterface,
                  read_buffer_size=None, write_buffer_size=None):
         super().__init__(device, applet)
 
@@ -151,6 +152,7 @@ class DirectDemultiplexerInterface(AccessDemultiplexerInterface):
         self._pipe_num   = mux_interface._pipe_num
         self._addr_reset = mux_interface._addr_reset
 
+        self.device: GlasgowHardwareDevice
         config_num = self.device.usb_handle.getConfiguration()
         for config in self.device.usb_handle.getDevice().iterConfigurations():
             if config.getConfigurationValue() == config_num:

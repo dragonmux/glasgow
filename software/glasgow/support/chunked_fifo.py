@@ -1,5 +1,5 @@
 from collections import deque
-
+from typing import Deque
 
 __all__ = ["ChunkedFIFO"]
 
@@ -9,7 +9,7 @@ class ChunkedFIFO:
     A first-in first-out byte buffer that uses discontiguous storage to operate without copying.
     """
     def __init__(self):
-        self._queue  = deque()
+        self._queue: Deque[memoryview]  = deque()
         self._chunk  = None
         self._offset = 0
         self._length = 0

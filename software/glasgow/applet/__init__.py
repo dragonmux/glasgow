@@ -1,5 +1,6 @@
 import re
 import argparse
+from logging import Logger
 from abc import ABCMeta, abstractmethod
 from amaranth import *
 
@@ -34,6 +35,7 @@ class GlasgowApplet(metaclass=ABCMeta):
     help = "applet help missing"
     description = "applet description missing"
     required_revision = "A0"
+    logger: Logger
 
     @classmethod
     def add_build_arguments(cls, parser, access):

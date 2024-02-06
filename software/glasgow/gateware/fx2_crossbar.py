@@ -157,11 +157,11 @@ class _OUTFIFO(Elaboratable, FIFOInterface):
     reacts to the ``w_rdy`` flag with a latency up to the skid buffer depth, and writes
     will not be lost.
     """
-    def __init__(self, inner, skid_depth):
+    def __init__(self, inner: '_AsyncFIFOWrapper', skid_depth: int):
         super().__init__(width=inner.width, depth=inner.depth, fwft=True)
 
         self.inner = inner
-        self.skid  = skid  = SyncFIFO(width=inner.width, depth=skid_depth)
+        self.skid  = skid = SyncFIFO(width=inner.width, depth=skid_depth)
 
         self.r_data   = inner.r_data
         self.r_en     = inner.r_en
@@ -209,7 +209,7 @@ class _INFIFO(Elaboratable, FIFOInterface):
     This FIFO may be used for packetizing the data read from the FIFO when there is no particular
     framing available to optimize the packet boundaries.
     """
-    def __init__(self, inner, packet_size=512, asynchronous=False, auto_flush=True):
+    def __init__(self, inner: '_AsyncFIFOWrapper', packet_size=512, asynchronous=False, auto_flush=True):
         super().__init__(width=inner.width, depth=inner.depth, fwft=True)
 
         self.inner = inner
@@ -267,7 +267,7 @@ class _INFIFO(Elaboratable, FIFOInterface):
 
 
 class _UnimplementedINFIFO(FIFOInterface):
-    def __init__(self, width, packet_size=512):
+    def __init__(self, width: int, packet_size=512):
         super().__init__(width=width, depth=0, fwft=True)
 
         self.inner = FIFOInterface(width=width, depth=0, fwft=True)
@@ -282,7 +282,7 @@ class _UnimplementedINFIFO(FIFOInterface):
 
 
 class _AsyncFIFOWrapper(Elaboratable, FIFOInterface):
-    def __init__(self, inner, cd_logic, reset):
+    def __init__(self, inner: AsyncFIFO, cd_logic, reset):
         super().__init__(width=inner.width, depth=inner.depth, fwft=True)
 
         self.inner = inner
@@ -441,8 +441,8 @@ class FX2Crossbar(Elaboratable):
         ]
 
         sel_flag     = bus.flag.bit_select(bus.addr, 1)
-        sel_in_fifo  = self.in_fifos [bus.addr  [0]]
-        sel_out_fifo = self.out_fifos[bus.addr_p[0]]
+        sel_in_fifo : FIFOInterface = self.in_fifos [bus.addr  [0]]
+        sel_out_fifo: FIFOInterface = self.out_fifos[bus.addr_p[0]]
         m.d.comb += [
             bus.data.o.eq(sel_in_fifo.r_data),
             sel_out_fifo.w_data.eq(bus.data.i),
@@ -519,7 +519,7 @@ class FX2Crossbar(Elaboratable):
         else:
             assert isinstance(cd_logic, ClockDomain)
 
-            raw_fifo = DomainRenamer({
+            raw_fifo: AsyncFIFO = DomainRenamer({
                 crossbar_side: "crossbar",
                 logic_side:    "logic",
             })(AsyncFIFO(width=8, depth=depth))

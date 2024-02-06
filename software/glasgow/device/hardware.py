@@ -6,6 +6,7 @@ import usb1
 import asyncio
 import threading
 import importlib.resources
+from typing import List, Dict, Tuple
 from fx2 import REQ_RAM, REG_CPUCS
 from fx2.format import input_data
 
@@ -68,11 +69,11 @@ class GlasgowHardwareDevice:
             return input_data(f, fmt="ihex")
 
     @classmethod
-    def _enumerate_devices(cls, usb_context):
-        devices = []
-        devices_by_serial = {}
+    def _enumerate_devices(cls, usb_context: usb1.USBContext):
+        devices: List[usb1.USBDevice] = []
+        devices_by_serial: Dict[str, Tuple[str, usb1.USBDevice]] = {}
 
-        def hotplug_callback(usb_context, device, event):
+        def hotplug_callback(usb_context: usb1.USBContext, device: usb1.USBDevice, event):
             if event == usb1.HOTPLUG_EVENT_DEVICE_ARRIVED:
                 if device.getVendorID() == VID_QIHW and device.getProductID() == PID_GLASGOW:
                     devices.append(device)

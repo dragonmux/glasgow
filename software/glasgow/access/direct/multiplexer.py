@@ -2,7 +2,8 @@ import logging
 from amaranth import *
 
 from .. import AccessMultiplexer, AccessMultiplexerInterface
-from ...gateware.fx2_crossbar import FX2Crossbar
+from ...gateware.fx2_crossbar import FX2Crossbar, _INFIFO, _OUTFIFO
+from ...gateware.registers import Registers
 from ...target.analyzer import GlasgowAnalyzer
 
 class _FIFOReadPort(Elaboratable):
@@ -20,7 +21,7 @@ class _FIFOReadPort(Elaboratable):
         Data enable. Deasserting data enable prevents any reads and also deasserts
         the readable flag.
     """
-    def __init__(self, fifo):
+    def __init__(self, fifo: _OUTFIFO):
         self._fifo = fifo
         self.width = fifo.width
         self.depth = fifo.depth
@@ -58,7 +59,7 @@ class _FIFOWritePort(Elaboratable):
         Data enable. Deasserting data enable prevents any writes and also deasserts
         the writable flag.
     """
-    def __init__(self, fifo):
+    def __init__(self, fifo: _INFIFO):
         self._fifo = fifo
         self.width = fifo.width
         self.depth = fifo.depth
@@ -154,8 +155,8 @@ class DirectMultiplexer(AccessMultiplexer):
 
 
 class DirectMultiplexerInterface(AccessMultiplexerInterface):
-    def __init__(self, applet, analyzer : GlasgowAnalyzer, registers, fx2_crossbar : FX2Crossbar, pipe_num, pins,
-                 throttle):
+    def __init__(self, applet, analyzer : GlasgowAnalyzer, registers: Registers, fx2_crossbar : FX2Crossbar,
+                 pipe_num: int, pins, throttle):
         assert throttle in ("full", "fifo", "none")
 
         super().__init__(applet, analyzer)
