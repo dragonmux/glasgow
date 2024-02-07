@@ -488,6 +488,7 @@ class JTAGPDIApplet(GlasgowApplet):
 		self.logger.info(f"Device is a {idCode[1]} {idCode[3]} revision {idCode[2]} ({idCode[0]})")
 		self.logger.info("Begining PDI session with device, type 'exit' to leave")
 
+		self.__repeatCount = 0
 		response = None
 		while response != 'exit':
 			print("> ", flush = True, end = '')
