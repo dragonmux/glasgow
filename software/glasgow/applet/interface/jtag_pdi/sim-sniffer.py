@@ -216,6 +216,8 @@ def benchJTAG():
 	yield
 	yield from jtagPDI((0x24, 0), (0xEB, 1))
 	yield
+	yield from jtagPDI((0x00, 0), (0xDB, 1))
+	yield
 	yield from jtagPDI((0x00, 0), (0x1E, 0))
 	yield
 	yield from jtagPDI((0x00, 0), (0x98, 1))

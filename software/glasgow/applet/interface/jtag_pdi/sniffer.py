@@ -220,7 +220,10 @@ class PDIDissector(Elaboratable):
 				with m.If(pdiStrobe):
 					m.next = "CHECK-PARITY"
 			with m.State("CHECK-PARITY"):
-				with m.If((opcode == PDIOpcodes.IDLE) | (writeCount != 0)):
+				# Handle delay bytes up front by ignoring them and going back to idle
+				with m.If((pdiDataOut[0:8] == 0xDB) & ~parityOutOK):
+					m.next = "IDLE"
+				with m.Elif((opcode == PDIOpcodes.IDLE) | (writeCount != 0)):
 					with m.If(parityInOK):
 						m.next = "HANDLE-WRITE"
 					with m.Else():
@@ -268,7 +271,12 @@ class PDIDissector(Elaboratable):
 				m.next = "IDLE"
 			with m.State("PARITY-ERROR"):
 				m.d.comb += self.error.eq(1)
-				m.d.sync += opcode.eq(PDIOpcodes.IDLE)
+				m.d.sync += [
+					readCount.eq(0),
+					writeCount.eq(0),
+
+					opcode.eq(PDIOpcodes.IDLE),
+				]
 				m.next = "IDLE"
 
 		sizeA = Signal(5)
@@ -302,6 +310,9 @@ class PDIDissector(Elaboratable):
 						m.next = "REPEAT"
 					with m.Case(PDIOpcodes.KEY):
 						m.next = "KEY"
+					with m.Case(PDIOpcodes.IDLE):
+						m.d.sync += repCount.eq(0)
+						m.next = "IDLE"
 			with m.State("LDS"):
 				m.d.sync += [
 					writeCount.eq(sizeA),
