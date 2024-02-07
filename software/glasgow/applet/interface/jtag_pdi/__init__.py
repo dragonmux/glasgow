@@ -419,16 +419,17 @@ class JTAGPDIApplet(GlasgowApplet):
 			sizeB = self._suffix_to_bytes(command.split('.', 1)[1])
 			if not isinstance(sizeB, int):
 				return sizeB
-			if len(parts) > 2 + sizeB:
-				return 'Incorrect number of arguments to ST instruction'
 			access = self._parse_ptr(parts[1])
 			if not isinstance(access, int):
 				return access
-			data = [self._parse_number(part) for part in parts[2:]]
-			check = self._check_data(data, parts)
-			if check is not None:
-				return check
-			return ([self._encode_opcode(PDIOpcodes.ST, sizeA = access, sizeB = sizeB)] + data, 0)
+			value = self._parse_number(parts[2])
+			size = self._least_bytes_for(value)
+			if not isinstance(size, int):
+				return size
+			elif size > sizeB:
+				return 'Too many bytes for ptr value in ST instruction'
+			return ([self._encode_opcode(PDIOpcodes.ST, sizeA = access, sizeB = sizeB)] +
+				self._to_bytes(sizeB, value), 0)
 		elif command == 'ldcs':
 			if len(parts) != 2:
 				return 'Incorrect number of arguments to LDCS instruction'
