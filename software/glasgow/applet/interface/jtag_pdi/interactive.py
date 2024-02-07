@@ -242,7 +242,7 @@ class JTAGTAP(Elaboratable):
 		return m
 
 class PDIController(Elaboratable):
-	def __init__(self, *, tap : JTAGTAP):
+	def __init__(self, *, tap : JTAGTAP, pdi_error : Signal):
 		self._tap = tap
 		self.issue = Signal()
 		self.complete = Signal()
@@ -253,6 +253,7 @@ class PDIController(Elaboratable):
 		self.cmd = Signal(8)
 		self.dataIn = Signal(8)
 		self.dataOut = Signal(8)
+		self._pdiError = pdi_error
 
 	def elaborate(self, platform) -> Module:
 		m = Module()
@@ -261,6 +262,7 @@ class PDIController(Elaboratable):
 		pdiComplete = self.complete
 		pdiNeedData = self.needData
 		pdiHaveData = self.haveData
+		pdiError = self._pdiError
 		tapIssue = self._tap.pdiIssue
 		tapReady = self._tap.pdiReady
 		tapDataIn = self._tap.pdiDataIn
@@ -295,6 +297,7 @@ class PDIController(Elaboratable):
 						tapDataOut.eq(Cat(self.cmd, self.cmd.xor())),
 						tapIssue.eq(1),
 						newCommand.eq(1),
+						pdiError.eq(0),
 					]
 					m.d.comb += updateCounts.eq(1)
 					m.next = "SEND-CMD"
@@ -360,7 +363,10 @@ class PDIController(Elaboratable):
 				with m.Else():
 					m.d.comb += pdiComplete.eq(1)
 					m.next = "IDLE"
-				m.d.sync += self.dataIn.eq(tapDataIn[0:8])
+				m.d.sync += [
+					self.dataIn.eq(tapDataIn[0:8]),
+					pdiError.eq(pdiError | (tapDataIn[8] != tapDataIn[0:8].xor())),
+				]
 				m.d.comb += pdiHaveData.eq(1)
 			with m.State("RECV-PAUSE"):
 				with m.If(readCount != 0):
@@ -461,17 +467,19 @@ class PDIController(Elaboratable):
 		return m
 
 class JTAGPDIInteractiveSubtarget(Elaboratable):
-	def __init__(self, *, pads, in_fifo: AccessMultiplexerInFIFO, out_fifo: AccessMultiplexerOutFIFO, period_cyc: int):
+	def __init__(self, *, pads, in_fifo: AccessMultiplexerInFIFO, out_fifo: AccessMultiplexerOutFIFO,
+			period_cyc: int, pdi_error : Signal):
 		self._pads = pads
 		self._in_fifo = in_fifo
 		self._out_fifo = out_fifo
 		self._period_cyc = period_cyc
+		self._pdi_error = pdi_error
 
 	def elaborate(self, platform) -> Module:
 		m = Module()
 		bus = m.submodules.bus = JTAGBus(pads = self._pads)
 		tap = m.submodules.tap = JTAGTAP(bus = bus, period_cyc = self._period_cyc)
-		pdi = m.submodules.pdi = PDIController(tap = tap)
+		pdi = m.submodules.pdi = PDIController(tap = tap, pdi_error = self._pdi_error)
 		in_fifo = self._in_fifo
 		out_fifo = self._out_fifo
 

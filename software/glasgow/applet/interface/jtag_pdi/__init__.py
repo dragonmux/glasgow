@@ -99,12 +99,14 @@ class JTAGPDIApplet(GlasgowApplet):
 				in_fifo = iface.get_in_fifo(depth = 8192),
 			))
 		else:
+			pdiError, self.__addrPDIError = target.registers.add_ro(1)
 			from .interactive import JTAGPDIInteractiveSubtarget
 			iface.add_subtarget(JTAGPDIInteractiveSubtarget(
 				pads = iface.get_pads(args, pins = self.__pins),
 				in_fifo = iface.get_in_fifo(depth = 1024),
 				out_fifo = iface.get_out_fifo(depth = 1024),
 				period_cyc = target.sys_clk_freq // (args.frequency * 1000),
+				pdi_error = pdiError,
 			))
 		self.pads = iface.pads
 
@@ -470,7 +472,7 @@ class JTAGPDIApplet(GlasgowApplet):
 			return ([self._encode_opcode(PDIOpcodes.KEY)] + key, 0)
 		return 'Invalid opcode'
 
-	async def _interactive_prompt(self, iface : AccessDemultiplexerInterface):
+	async def _interactive_prompt(self, device : GlasgowHardwareDevice, iface : AccessDemultiplexerInterface):
 		from sys import stdin
 		from . import meta
 
@@ -499,10 +501,11 @@ class JTAGPDIApplet(GlasgowApplet):
 				continue
 			operation, readCount = command
 			await iface.write([Header.PDI] + operation)
-			if readCount != 0:
-				result = (await iface.read()).tobytes()
+			error = await device.read_register(self.__addrPDIError, width = 1)
+			if error != 0:
+				self.logger.error('PDI controller encountered a parity error')
 			result = (await iface.read(length = readCount)).tobytes()
-			self.logger.info(f'Recieved {result!r}')
+			self.logger.info(f'Recieved {result.hex()}')
 
 	async def interact(self, device : GlasgowHardwareDevice, args : argparse.Namespace, iface : JTAGPDIInterface):
 		if args.raw_file:
@@ -510,7 +513,7 @@ class JTAGPDIApplet(GlasgowApplet):
 		elif args.pdi_file:
 			await self._write_pdi_vcd(args.pdi_file, iface)
 		else:
-			await self._interactive_prompt(iface.lower)
+			await self._interactive_prompt(device, iface.lower)
 
 	@classmethod
 	def tests(cls):
