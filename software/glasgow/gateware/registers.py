@@ -1,5 +1,5 @@
 from amaranth import *
-
+from .i2c import I2CTarget
 
 __all__ = ["Registers", "I2CRegisters"]
 
@@ -46,7 +46,7 @@ class I2CRegisters(Registers):
     Note that for multibyte registers, the register data is read in little endian, but written
     in big endian. This replaces a huge multiplexer with a shift register, but is a bit cursed.
     """
-    def __init__(self, i2c_target):
+    def __init__(self, i2c_target: I2CTarget):
         super().__init__()
         self.i2c_target = i2c_target
 

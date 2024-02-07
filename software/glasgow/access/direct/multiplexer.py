@@ -1,5 +1,5 @@
-import logging
 from amaranth import *
+from typing import Optional
 
 from .. import AccessMultiplexer, AccessMultiplexerInterface, AccessMultiplexerInFIFO, AccessMultiplexerOutFIFO
 from ...gateware.fx2_crossbar import FX2Crossbar, _INFIFO, _OUTFIFO
@@ -155,9 +155,13 @@ class DirectMultiplexer(AccessMultiplexer):
 
 
 class DirectMultiplexerInterface(AccessMultiplexerInterface):
-    def __init__(self, applet, analyzer : GlasgowAnalyzer, registers: Registers, fx2_crossbar : FX2Crossbar,
+    def __init__(self, applet, analyzer : Optional[GlasgowAnalyzer], registers: Registers, fx2_crossbar : FX2Crossbar,
                  pipe_num: int, pins, throttle):
         assert throttle in ("full", "fifo", "none")
+        if throttle == 'none':
+            assert analyzer is None
+        else:
+            assert analyzer is not None
 
         super().__init__(applet, analyzer)
         self._registers     = registers
@@ -181,8 +185,10 @@ class DirectMultiplexerInterface(AccessMultiplexerInterface):
 
         for fifo in self._fifos:
             if self._throttle == "full":
+                assert self.analyzer is not None
                 m.d.comb += fifo._ctrl_en.eq(~self.analyzer.throttle)
             elif self._throttle == "fifo":
+                assert self.analyzer is not None
                 m.d.comb += fifo._data_en.eq(~self.analyzer.throttle)
 
             m.submodules += fifo
@@ -225,6 +231,7 @@ class DirectMultiplexerInterface(AccessMultiplexerInterface):
 
     def add_subtarget(self, subtarget):
         if self._throttle == "full":
+            assert self.analyzer is not None
             # When in the "full" throttling mode, once the throttle signal is asserted while
             # the applet asserts `r_en` or `w_en`, the applet will cause spurious reads or writes;
             # this happens because the FIFO is not in the control enable domain of the applet.

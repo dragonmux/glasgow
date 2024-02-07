@@ -34,6 +34,8 @@ class JTAGPDIInterface:
 
 	async def read(self):
 		data = await self.lower.read()
+		if data is None:
+			raise ValueError()
 		def process():
 			for octet in data:
 				yield octet

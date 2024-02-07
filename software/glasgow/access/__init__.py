@@ -65,7 +65,7 @@ class AccessMultiplexerInterface(Elaboratable, metaclass=ABCMeta):
     _pipe_num: int
     _addr_reset: int
 
-    def __init__(self, applet, analyzer : GlasgowAnalyzer):
+    def __init__(self, applet, analyzer : Optional[GlasgowAnalyzer]):
         from ..applet import GlasgowApplet
         self.applet: GlasgowApplet   = applet
         self.logger   = applet.logger

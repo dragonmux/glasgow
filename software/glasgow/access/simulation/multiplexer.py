@@ -1,7 +1,8 @@
 from amaranth import *
 from amaranth.lib.fifo import FIFOInterface, AsyncFIFO, SyncFIFOBuffered
+from typing import Callable
 
-from .. import AccessMultiplexer, AccessMultiplexerInterface
+from .. import AccessMultiplexer, AccessMultiplexerInterface, AccessMultiplexerInFIFO, AccessMultiplexerOutFIFO
 
 
 class SimulationMultiplexer(AccessMultiplexer):
@@ -80,13 +81,14 @@ class SimulationMultiplexerInterface(AccessMultiplexerInterface):
     def build_pin_tristate(self, pin, oe, o, i):
         pass
 
-    def _make_fifo(self, crossbar_side, logic_side, cd_logic, depth, wrapper=lambda x: x):
+    def _make_fifo(self, crossbar_side, logic_side, cd_logic, depth,
+                   wrapper: Callable[[FIFOInterface], FIFOInterface] =lambda x: x):
         if cd_logic is None:
             fifo = wrapper(SyncFIFOBuffered(width=8, depth=depth))
         else:
             assert isinstance(cd_logic, ClockDomain)
 
-            raw_fifo = DomainRenamer({
+            raw_fifo: FIFOInterface = DomainRenamer({
                 crossbar_side: "sync",
                 logic_side:    "logic",
             })(AsyncFIFO(width=8, depth=depth))
@@ -94,7 +96,7 @@ class SimulationMultiplexerInterface(AccessMultiplexerInterface):
 
         return fifo
 
-    def get_in_fifo(self, depth=512, auto_flush=True, clock_domain=None):
+    def get_in_fifo(self, depth=512, auto_flush=True, clock_domain=None) -> AccessMultiplexerInFIFO:
         assert self.in_fifo is None
 
         self.in_fifo = self._make_fifo(
@@ -102,7 +104,7 @@ class SimulationMultiplexerInterface(AccessMultiplexerInterface):
         self.in_fifo.flush = Signal(reset=auto_flush)
         return self.in_fifo
 
-    def get_out_fifo(self, depth=512, clock_domain=None):
+    def get_out_fifo(self, depth=512, clock_domain=None) -> AccessMultiplexerOutFIFO:
         assert self.out_fifo is None
 
         self.out_fifo = self._make_fifo(
