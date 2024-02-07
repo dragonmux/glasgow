@@ -142,14 +142,50 @@
 # FIFOADR->FLAG                 10.7
 # FIFOADR->FIFODATA             14.3
 
-from amaranth import *
+from amaranth import (
+	Elaboratable, Module, Signal, Array, Cat, Const, ClockDomain, ClockSignal, DomainRenamer, ResetInserter
+)
+from amaranth.hdl import Record
 from amaranth.lib.cdc import FFSynchronizer, ResetSynchronizer
 from amaranth.lib.fifo import FIFOInterface, AsyncFIFO, SyncFIFO, SyncFIFOBuffered
 from amaranth.lib.io import Pin
 
-
 __all__ = ["FX2Crossbar"]
 
+class _IPad(Record):
+    i: Signal
+
+class _OPad(Record):
+    o: Signal
+
+class _IOPin(Pin):
+    i: Signal
+    o: Signal
+    oe: Signal
+
+class _IPadClked(_IPad):
+    i_clk: Signal
+
+class _OPadClked(_OPad):
+    o_clk: Signal
+
+class _IOPadClked(Record):
+    i0: Signal
+    i1: Signal
+    i_clk: Signal
+    o0: Signal
+    o1: Signal
+    o_clk: Signal
+    oe: Signal
+
+class _FX2BusInterface(Record):
+    sloe: _OPadClked
+    slrd: _OPadClked
+    slwr: _OPadClked
+    pktend: _OPadClked
+    fifoadr: _OPadClked
+    flag: _IPadClked
+    fd: _IOPadClked
 
 class _OUTFIFO(Elaboratable, FIFOInterface):
     """
@@ -161,7 +197,7 @@ class _OUTFIFO(Elaboratable, FIFOInterface):
         super().__init__(width=inner.width, depth=inner.depth)
 
         self.inner = inner
-        self.skid  = skid = SyncFIFO(width=inner.width, depth=skid_depth)
+        self.skid  = SyncFIFO(width=inner.width, depth=skid_depth)
 
         self.r_data   = inner.r_data
         self.r_en     = inner.r_en
@@ -320,6 +356,7 @@ class _AsyncFIFOWrapper(Elaboratable, FIFOInterface):
             cd_logic.clk.eq(self.cd_logic.clk),
         ]
         if self.reset is not None:
+            assert cd_crossbar.rst is not None
             m.d.comb += cd_crossbar.rst.eq(self.reset)
             m.submodules += ResetSynchronizer(self.reset, domain="logic")
 
@@ -330,10 +367,10 @@ class _AsyncFIFOWrapper(Elaboratable, FIFOInterface):
 
 
 class _FX2Bus(Elaboratable):
-    def __init__(self, pads):
+    def __init__(self, pads: _FX2BusInterface):
         self.flag = Signal(4)
         self.addr = Signal(2)
-        self.data = Pin(width=8, dir='io')
+        self.data = _IOPin(width=8, dir='io')
         self.sloe = Signal()
         self.slrd = Signal()
         self.slwr = Signal()
@@ -411,7 +448,7 @@ class FX2Crossbar(Elaboratable):
     FIFOs that are never requested are not implemented and behave as if they
     are never readable or writable.
     """
-    def __init__(self, pads):
+    def __init__(self, pads: _FX2BusInterface):
         self.bus = _FX2Bus(pads)
 
         self.out_fifos = Array([_UnimplementedOUTFIFO(width=8)
@@ -441,8 +478,8 @@ class FX2Crossbar(Elaboratable):
         ]
 
         sel_flag     = bus.flag.bit_select(bus.addr, 1)
-        sel_in_fifo : FIFOInterface = self.in_fifos [bus.addr  [0]]
-        sel_out_fifo: FIFOInterface = self.out_fifos[bus.addr_p[0]]
+        sel_in_fifo : _INFIFO  = self.in_fifos [bus.addr  [0]]
+        sel_out_fifo: _OUTFIFO = self.out_fifos[bus.addr_p[0]]
         m.d.comb += [
             bus.data.o.eq(sel_in_fifo.r_data),
             sel_out_fifo.w_data.eq(bus.data.i),
@@ -452,7 +489,7 @@ class FX2Crossbar(Elaboratable):
             m.d.comb += [
                 sel_in_fifo.r_en.eq(bus.slwr),
                 sel_in_fifo.flushed.eq(bus.pend),
-                bus.nrdy_i.eq(Cat(C(0b00, 2), (bus.slwr | bus.pend) << bus.addr[0])),
+                bus.nrdy_i.eq(Cat(Const(0b00, 2), (bus.slwr | bus.pend) << bus.addr[0])),
             ]
         with m.Else():
             m.d.comb += [

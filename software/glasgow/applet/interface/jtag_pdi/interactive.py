@@ -461,7 +461,7 @@ class PDIController(Elaboratable):
 		return m
 
 class JTAGPDIInteractiveSubtarget(Elaboratable):
-	def __init__(self, *, pads, in_fifo: AccessMultiplexerInFIFO, out_fifo: AccessMultiplexerOutFIFO, period_cyc):
+	def __init__(self, *, pads, in_fifo: AccessMultiplexerInFIFO, out_fifo: AccessMultiplexerOutFIFO, period_cyc: int):
 		self._pads = pads
 		self._in_fifo = in_fifo
 		self._out_fifo = out_fifo
